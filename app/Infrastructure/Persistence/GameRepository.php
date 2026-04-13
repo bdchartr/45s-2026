@@ -351,7 +351,15 @@ final class GameRepository
 
         $events = $stmt->fetchAll();
         foreach ($events as &$event) {
-            $event['payload'] = json_decode((string) $event['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+            $payloadRaw = (string) $event['payload_json'];
+            try {
+                $decoded = json_decode($payloadRaw, true, 512, JSON_THROW_ON_ERROR);
+                $event['payload'] = is_array($decoded) ? $decoded : [];
+            } catch (\Throwable) {
+                $event['payload'] = [
+                    '_decode_error' => true,
+                ];
+            }
             unset($event['payload_json']);
         }
 
@@ -373,6 +381,150 @@ final class GameRepository
         ]);
 
         return $nextSeq;
+    }
+
+    public function countEventsByType(int $gameId, string $eventType): int
+    {
+        $sql = 'SELECT COUNT(*)
+                FROM game_events
+                WHERE game_id = :game_id AND event_type = :event_type';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'game_id' => $gameId,
+            'event_type' => $eventType,
+        ]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function listRecentEventsByType(int $gameId, string $eventType, int $limit = 4): array
+    {
+        $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                FROM game_events
+                WHERE game_id = :game_id AND event_type = :event_type
+                ORDER BY seq_no DESC
+                LIMIT :limit';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->bindValue(':game_id', $gameId, \PDO::PARAM_INT);
+        $stmt->bindValue(':event_type', $eventType, \PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        $events = $stmt->fetchAll();
+        $events = array_reverse($events);
+        foreach ($events as &$event) {
+            $payloadRaw = (string) $event['payload_json'];
+            try {
+                $decoded = json_decode($payloadRaw, true, 512, JSON_THROW_ON_ERROR);
+                $event['payload'] = is_array($decoded) ? $decoded : [];
+            } catch (\Throwable) {
+                $event['payload'] = [
+                    '_decode_error' => true,
+                ];
+            }
+            unset($event['payload_json']);
+        }
+
+        return $events;
+    }
+
+    public function latestEventByType(int $gameId, string $eventType): ?array
+    {
+        $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                FROM game_events
+                WHERE game_id = :game_id AND event_type = :event_type
+                ORDER BY seq_no DESC
+                LIMIT 1';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'game_id' => $gameId,
+            'event_type' => $eventType,
+        ]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        $payloadRaw = (string) $row['payload_json'];
+        try {
+            $decoded = json_decode($payloadRaw, true, 512, JSON_THROW_ON_ERROR);
+            $row['payload'] = is_array($decoded) ? $decoded : [];
+        } catch (\Throwable) {
+            $row['payload'] = [
+                '_decode_error' => true,
+            ];
+        }
+        unset($row['payload_json']);
+        return $row;
+    }
+
+    public function latestSeatHand(int $gameId, int $seat): ?array
+    {
+        $sql = 'SELECT payload_json
+                FROM game_events
+                WHERE game_id = :game_id AND event_type IN ("hand_dealt", "hand_updated")
+                ORDER BY seq_no DESC
+                LIMIT 300';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'game_id' => $gameId,
+        ]);
+
+        $rows = $stmt->fetchAll();
+        foreach ($rows as $row) {
+            try {
+                $decoded = json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+            } catch (\Throwable) {
+                continue;
+            }
+            $payload = is_array($decoded) ? $decoded : [];
+            $eventSeat = isset($payload['seat']) ? (int) $payload['seat'] : -1;
+            if ($eventSeat !== $seat) {
+                continue;
+            }
+
+            $cards = (array) ($payload['cards'] ?? []);
+            $clean = [];
+            foreach ($cards as $card) {
+                $cardCode = strtoupper(trim((string) $card));
+                if ($cardCode !== '') {
+                    $clean[] = $cardCode;
+                }
+            }
+            return $clean;
+        }
+
+        return null;
+    }
+
+    public function listEventsByType(int $gameId, string $eventType, int $limit = 1000): array
+    {
+        $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                FROM game_events
+                WHERE game_id = :game_id AND event_type = :event_type
+                ORDER BY seq_no ASC
+                LIMIT :limit';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->bindValue(':game_id', $gameId, \PDO::PARAM_INT);
+        $stmt->bindValue(':event_type', $eventType, \PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        $events = $stmt->fetchAll();
+        foreach ($events as &$event) {
+            $payloadRaw = (string) $event['payload_json'];
+            try {
+                $decoded = json_decode($payloadRaw, true, 512, JSON_THROW_ON_ERROR);
+                $event['payload'] = is_array($decoded) ? $decoded : [];
+            } catch (\Throwable) {
+                $event['payload'] = [
+                    '_decode_error' => true,
+                ];
+            }
+            unset($event['payload_json']);
+        }
+
+        return $events;
     }
 
     public function bidSummary(int $gameId): array

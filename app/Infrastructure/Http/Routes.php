@@ -66,6 +66,22 @@ final class Routes
             return null;
         };
 
+        $buildShuffledDeck = static function (int $seed): array {
+            $ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+            $suits = ['C', 'D', 'H', 'S'];
+            $deck = [];
+            foreach ($suits as $suit) {
+                foreach ($ranks as $rank) {
+                    $deck[] = $rank . $suit;
+                }
+            }
+
+            mt_srand($seed);
+            shuffle($deck);
+
+            return $deck;
+        };
+
         $app->get('/health', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
             $payload = [
                 'ok' => true,
@@ -77,6 +93,13 @@ final class Routes
         });
 
         $app->get('/', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+            $accept = strtolower($request->getHeaderLine('Accept'));
+            if ($accept === '' || strpos($accept, 'text/html') !== false) {
+                return $response
+                    ->withHeader('Location', '/45s/lobby.html')
+                    ->withStatus(302);
+            }
+
             $payload = [
                 'ok' => true,
                 'service' => '45s-backend',
@@ -503,38 +526,42 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'creator cannot also be invited'], 400);
             }
 
-            $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode): int {
-                $gameId = $repo->createGame($targetScore, $ruleset, $userId);
-                for ($seat = 0; $seat < 4; $seat++) {
-                    $isAi = $aiMap[$seat];
-                    $seatUserId = null;
-                    $connected = false;
-                    if ($seat === 0 && !$isAi) {
-                        $seatUserId = $userId;
-                        $connected = $userId !== null;
-                    }
-
-                    if (array_key_exists($seat, $inviteBySeat)) {
-                        $seatUserId = (int) $inviteBySeat[$seat];
+            try {
+                $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode): int {
+                    $gameId = $repo->createGame($targetScore, $ruleset, $userId);
+                    for ($seat = 0; $seat < 4; $seat++) {
+                        $isAi = $aiMap[$seat];
+                        $seatUserId = null;
                         $connected = false;
+                        if ($seat === 0 && !$isAi) {
+                            $seatUserId = $userId;
+                            $connected = $userId !== null;
+                        }
+
+                        if (array_key_exists($seat, $inviteBySeat)) {
+                            $seatUserId = (int) $inviteBySeat[$seat];
+                            $connected = false;
+                        }
+
+                        if ($isAi) {
+                            $connected = true;
+                        }
+
+                        $repo->addPlayerSeat($gameId, $seat, $seatUserId, $isAi, $connected);
                     }
+                    $repo->appendEvent($gameId, 'game_created', 0, [
+                        'target_score' => $targetScore,
+                        'ruleset' => $ruleset,
+                        'invite_mode' => $inviteMode,
+                        'invites' => $inviteBySeat,
+                        'at' => gmdate('c'),
+                    ]);
 
-                    if ($isAi) {
-                        $connected = true;
-                    }
-
-                    $repo->addPlayerSeat($gameId, $seat, $seatUserId, $isAi, $connected);
-                }
-                $repo->appendEvent($gameId, 'game_created', 0, [
-                    'target_score' => $targetScore,
-                    'ruleset' => $ruleset,
-                    'invite_mode' => $inviteMode,
-                    'invites' => $inviteBySeat,
-                    'at' => gmdate('c'),
-                ]);
-
-                return $gameId;
-            });
+                    return $gameId;
+                });
+            } catch (\Throwable $ex) {
+                return $json($response, ['ok' => false, 'error' => 'create_game_failed', 'detail' => $ex->getMessage()], 500);
+            }
 
             return $json($response, ['ok' => true, 'game_id' => $gameId], 201);
         });
@@ -621,43 +648,80 @@ final class Routes
             ]);
         });
 
-        $app->get('/api/game/get_state', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
-            $params = $request->getQueryParams();
-            $gameId = (int) ($params['game_id'] ?? 0);
-            if ($gameId <= 0) {
-                return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
+        $app->get('/api/game/get_state', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $buildShuffledDeck): ResponseInterface {
+            try {
+                $params = $request->getQueryParams();
+                $gameId = (int) ($params['game_id'] ?? 0);
+                if ($gameId <= 0) {
+                    return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
+                }
+
+                $repo = new GameRepository(Database::fromConfig());
+                $auth = new SessionAuth();
+                $viewerUserId = $auth->userId();
+                if ($viewerUserId === null) {
+                    return $json($response, ['ok' => false, 'error' => 'authentication_required'], 401);
+                }
+
+                $state = $repo->findGameState($gameId);
+                if ($state === null) {
+                    return $json($response, ['ok' => false, 'error' => 'Game not found'], 404);
+                }
+
+                if (!$repo->userExists($viewerUserId)) {
+                    return $json($response, ['ok' => false, 'error' => 'session_user_not_found'], 401);
+                }
+
+                $isPrivileged = $repo->userIsOwnerOrAdmin($viewerUserId);
+                if (!$isPrivileged && !$repo->userInGame($viewerUserId, $gameId)) {
+                    return $json($response, ['ok' => false, 'error' => 'forbidden_for_viewer'], 403);
+                }
+
+                $players = $repo->listPlayers($gameId);
+                $events = $repo->listEventsAfter($gameId, 0, 200);
+                $viewerSeat = $repo->findSeatForUser($gameId, $viewerUserId);
+                $viewerHand = [];
+                if ($viewerSeat !== null) {
+                    $deck = $buildShuffledDeck($gameId);
+                    $hands = [0 => [], 1 => [], 2 => [], 3 => []];
+                    for ($round = 0; $round < 5; $round++) {
+                        for ($seat = 0; $seat < 4; $seat++) {
+                            $card = array_shift($deck);
+                            if ($card !== null) {
+                                $hands[$seat][] = $card;
+                            }
+                        }
+                    }
+
+                    $viewerHand = $hands[$viewerSeat] ?? [];
+                    foreach ($events as $event) {
+                        if (($event['event_type'] ?? '') !== 'card_played') {
+                            continue;
+                        }
+                        if ((int) ($event['actor_seat'] ?? -1) !== (int) $viewerSeat) {
+                            continue;
+                        }
+                        $payload = (isset($event['payload']) && is_array($event['payload'])) ? $event['payload'] : [];
+                        $played = strtoupper(trim((string) (($payload['card'] ?? ''))));
+                        $idx = array_search($played, $viewerHand, true);
+                        if ($idx !== false) {
+                            unset($viewerHand[$idx]);
+                            $viewerHand = array_values($viewerHand);
+                        }
+                    }
+                }
+
+                return $json($response, [
+                    'ok' => true,
+                    'game' => $state,
+                    'players' => $players,
+                    'events' => $events,
+                    'viewer_seat' => $viewerSeat,
+                    'viewer_hand' => $viewerHand,
+                ]);
+            } catch (\Throwable $ex) {
+                return $json($response, ['ok' => false, 'error' => 'get_state_failed', 'detail' => $ex->getMessage()], 500);
             }
-
-            $repo = new GameRepository(Database::fromConfig());
-            $auth = new SessionAuth();
-            $viewerUserId = $auth->userId();
-            if ($viewerUserId === null) {
-                return $json($response, ['ok' => false, 'error' => 'authentication_required'], 401);
-            }
-
-            $state = $repo->findGameState($gameId);
-            if ($state === null) {
-                return $json($response, ['ok' => false, 'error' => 'Game not found'], 404);
-            }
-
-            if (!$repo->userExists($viewerUserId)) {
-                return $json($response, ['ok' => false, 'error' => 'session_user_not_found'], 401);
-            }
-
-            $isPrivileged = $repo->userIsOwnerOrAdmin($viewerUserId);
-            if (!$isPrivileged && !$repo->userInGame($viewerUserId, $gameId)) {
-                return $json($response, ['ok' => false, 'error' => 'forbidden_for_viewer'], 403);
-            }
-
-            $players = $repo->listPlayers($gameId);
-            $events = $repo->listEventsAfter($gameId, 0, 200);
-
-            return $json($response, [
-                'ok' => true,
-                'game' => $state,
-                'players' => $players,
-                'events' => $events,
-            ]);
         });
 
         $app->get('/api/game/poll_events', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {

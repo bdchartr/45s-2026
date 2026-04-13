@@ -6,6 +6,9 @@ namespace FortyFives\Application\Services;
 
 use FortyFives\Application\Contracts\ActionCommand;
 use FortyFives\Application\Contracts\ActionResult;
+use FortyFives\Domain\Game\Card;
+use FortyFives\Domain\Rules\CardRanker;
+use FortyFives\Domain\Rules\TrickResolver;
 use FortyFives\Infrastructure\Persistence\GameRepository;
 
 final class GameRuntimeService
@@ -72,6 +75,19 @@ final class GameRuntimeService
                     'winning_seat' => (int) $winnerSeat,
                     'at' => gmdate('c'),
                 ]);
+                $this->games->appendEvent($gameId, 'kitty_picked_up', (int) $winnerSeat, [
+                    'winner_seat' => (int) $winnerSeat,
+                    'at' => gmdate('c'),
+                ]);
+                $this->games->appendEvent($gameId, 'discard_completed', (int) $winnerSeat, [
+                    'seat' => (int) $winnerSeat,
+                    'at' => gmdate('c'),
+                ]);
+                $this->games->appendEvent($gameId, 'restock_completed', (int) $winnerSeat, [
+                    'seat' => (int) $winnerSeat,
+                    'target_hand_size' => 5,
+                    'at' => gmdate('c'),
+                ]);
 
                 return ActionResult::accepted([
                     'phase' => 'trick_play',
@@ -100,10 +116,78 @@ final class GameRuntimeService
 
         $gameId = (int) $state['id'];
         return $this->games->withTransaction(function () use ($gameId, $command, $card): ActionResult {
+            $currentHand = $this->reconstructSeatHand($gameId, $command->seat);
+            $cardUpper = strtoupper($card);
+            $cardIndex = array_search($cardUpper, $currentHand, true);
+            if ($cardIndex === false) {
+                return ActionResult::rejected('card_not_in_hand', 'Card is not available in this seat hand.');
+            }
+
+            unset($currentHand[$cardIndex]);
+            $currentHand = array_values($currentHand);
+
             $this->games->appendEvent($gameId, 'card_played', $command->seat, [
-                'card' => $card,
+                'card' => $cardUpper,
                 'at' => gmdate('c'),
             ]);
+            $this->games->appendEvent($gameId, 'hand_updated', $command->seat, [
+                'seat' => $command->seat,
+                'cards' => $currentHand,
+                'reason' => 'play_card',
+                'at' => gmdate('c'),
+            ]);
+
+            $cardPlayCount = $this->games->countEventsByType($gameId, 'card_played');
+            $trickComplete = $cardPlayCount > 0 && ($cardPlayCount % 4) === 0;
+
+            if ($trickComplete) {
+                $recentPlays = $this->games->listRecentEventsByType($gameId, 'card_played', 4);
+                $plays = [];
+                $leadSuit = null;
+                $winningCardCode = null;
+
+                foreach ($recentPlays as $idx => $playEvent) {
+                    $seat = (int) ($playEvent['actor_seat'] ?? -1);
+                    $code = strtoupper(trim((string) (($playEvent['payload']['card'] ?? ''))));
+                    $parsed = $this->parseCardCode($code);
+                    if ($seat < 0 || $parsed === null) {
+                        continue;
+                    }
+                    if ($idx === 0) {
+                        $leadSuit = $parsed->suit;
+                    }
+                    $plays[$seat] = $parsed;
+                }
+
+                if (count($plays) === 4 && $leadSuit !== null) {
+                    $trumpSuit = $this->resolveTrumpSuit($gameId, $leadSuit);
+                    $resolver = new TrickResolver(new CardRanker());
+                    $winnerSeat = $resolver->winningSeat($plays, $leadSuit, $trumpSuit);
+
+                    foreach ($plays as $seat => $playedCard) {
+                        if ((int) $seat === (int) $winnerSeat) {
+                            $winningCardCode = $playedCard->code();
+                            break;
+                        }
+                    }
+
+                    $this->games->appendEvent($gameId, 'trick_won', $winnerSeat, [
+                        'winner_seat' => $winnerSeat,
+                        'trick_number' => (int) ($cardPlayCount / 4),
+                        'lead_suit' => $leadSuit,
+                        'trump_suit' => $trumpSuit,
+                        'winning_card' => $winningCardCode,
+                        'at' => gmdate('c'),
+                    ]);
+
+                    $this->games->setTurn($gameId, $winnerSeat);
+
+                    return ActionResult::accepted([
+                        'phase' => 'trick_play',
+                        'current_turn_seat' => $winnerSeat,
+                    ]);
+                }
+            }
 
             $nextSeat = ($command->seat + 1) % 4;
             $this->games->setTurn($gameId, $nextSeat);
@@ -113,5 +197,87 @@ final class GameRuntimeService
                 'current_turn_seat' => $nextSeat,
             ]);
         });
+    }
+
+    private function resolveTrumpSuit(int $gameId, string $fallbackSuit): string
+    {
+        $event = $this->games->latestEventByType($gameId, 'bidding_closed');
+        if ($event !== null) {
+            $payload = (array) ($event['payload'] ?? []);
+            $candidate = strtoupper(trim((string) ($payload['trump_suit'] ?? '')));
+            if (in_array($candidate, ['C', 'D', 'H', 'S'], true)) {
+                return $candidate;
+            }
+        }
+
+        return in_array($fallbackSuit, ['C', 'D', 'H', 'S'], true) ? $fallbackSuit : 'H';
+    }
+
+    private function parseCardCode(string $code): ?Card
+    {
+        $code = strtoupper(trim($code));
+        if ($code === '' || strlen($code) < 2) {
+            return null;
+        }
+
+        $suit = substr($code, -1);
+        if (!in_array($suit, ['C', 'D', 'H', 'S'], true)) {
+            return null;
+        }
+
+        $rank = substr($code, 0, -1);
+        $allowedRanks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+        if (!in_array($rank, $allowedRanks, true)) {
+            return null;
+        }
+
+        return new Card($suit, $rank);
+    }
+
+    private function reconstructSeatHand(int $gameId, int $seat): array
+    {
+        $deck = $this->buildSeededDeck($gameId);
+        $hands = [0 => [], 1 => [], 2 => [], 3 => []];
+        for ($round = 0; $round < 5; $round++) {
+            for ($s = 0; $s < 4; $s++) {
+                $card = array_shift($deck);
+                if ($card !== null) {
+                    $hands[$s][] = $card;
+                }
+            }
+        }
+
+        $hand = $hands[$seat] ?? [];
+        $plays = $this->games->listEventsByType($gameId, 'card_played', 4000);
+        foreach ($plays as $play) {
+            if ((int) ($play['actor_seat'] ?? -1) !== $seat) {
+                continue;
+            }
+            $playedCard = strtoupper(trim((string) (($play['payload']['card'] ?? ''))));
+            $idx = array_search($playedCard, $hand, true);
+            if ($idx !== false) {
+                unset($hand[$idx]);
+                $hand = array_values($hand);
+            }
+        }
+
+        return $hand;
+    }
+
+    private function buildSeededDeck(int $seed): array
+    {
+        $ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+        $suits = ['C', 'D', 'H', 'S'];
+        $deck = [];
+        foreach ($suits as $suit) {
+            foreach ($ranks as $rank) {
+                $deck[] = $rank . $suit;
+            }
+        }
+
+        mt_srand($seed);
+        shuffle($deck);
+
+        return $deck;
     }
 }

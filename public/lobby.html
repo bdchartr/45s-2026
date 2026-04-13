@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>45s Lobby</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+    :root {
+      --bg-1: #f2efe8;
+      --bg-2: #e7ddd0;
+      --paper: #fffdf8;
+      --ink: #1d2126;
+      --muted: #5c6670;
+      --line: #d0c6b8;
+      --brand: #0d6f66;
+      --brand-dark: #0a5952;
+      --accent: #d97a22;
+      --good: #1f8a47;
+      --warn: #c55a11;
+      --bad: #a32121;
+      --shadow: 0 16px 40px rgba(38, 33, 21, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'Chivo', 'Avenir Next', 'Segoe UI', sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 6%, rgba(217, 122, 34, 0.2), transparent 34%),
+        radial-gradient(circle at 88% 16%, rgba(13, 111, 102, 0.2), transparent 30%),
+        linear-gradient(165deg, var(--bg-1), var(--bg-2));
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 18px 16px 26px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .title {
+      font-size: clamp(28px, 6vw, 42px);
+      margin: 0;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 12px 0 16px;
+      color: var(--muted);
+      max-width: 62ch;
+      line-height: 1.5;
+    }
+
+    .hero-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f5efe5;
+      color: #4f4a43;
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+
+    .auth-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    input, select, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #c5baa8;
+      padding: 10px;
+      font: inherit;
+      color: var(--ink);
+      background: white;
+    }
+
+    button {
+      border: none;
+      background: var(--brand);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, background 0.2s ease;
+    }
+
+    button:hover { background: var(--brand-dark); }
+    button:active { transform: translateY(1px); }
+    button.secondary { background: #4f5b66; }
+    button.accent { background: var(--accent); }
+
+    .welcome {
+      margin-top: 10px;
+      border: 1px dashed #b9d8cc;
+      background: #f0fbf7;
+      border-radius: 12px;
+      padding: 10px;
+      color: #1b6847;
+      font-size: 14px;
+      display: none;
+    }
+
+    .account-card {
+      margin-top: 8px;
+      border: 1px solid #cfe0d7;
+      background: #f2faf6;
+      border-radius: 12px;
+      padding: 10px;
+      display: none;
+    }
+
+    .account-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 4px;
+      color: #1b6847;
+    }
+
+    .account-meta {
+      font-size: 12px;
+      color: #2f5140;
+      margin-bottom: 8px;
+    }
+
+    .status {
+      margin-top: 8px;
+      min-height: 20px;
+      font-size: 13px;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
+    .status.error { color: var(--bad); }
+    .status.success { color: var(--good); }
+
+    .dash {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+    }
+
+    .card {
+      grid-column: span 12;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      letter-spacing: 0.01em;
+    }
+
+    .muted { color: var(--muted); font-size: 12px; }
+
+    .mono { font-family: 'IBM Plex Mono', Consolas, monospace; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid #ddd2c3;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 640px;
+      font-size: 13px;
+    }
+
+    th, td {
+      padding: 9px;
+      border-bottom: 1px solid #ece4d8;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      background: #f7f2e9;
+      color: #4f4a43;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .invite-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .hidden { display: none; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e2d9ca;
+      margin: 6px 0;
+    }
+
+    .mt-10 { margin-top: 10px; }
+
+    @media (min-width: 920px) {
+      .card.create { grid-column: span 4; }
+      .card.mygames { grid-column: span 8; }
+      .card.joinable { grid-column: span 12; }
+    }
+
+    @media (max-width: 860px) {
+      .hero { grid-template-columns: 1fr; }
+      .row, .grid-2, .invite-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <article class="panel">
+        <h1 class="title">Forty-Fives Lobby</h1>
+        <p class="subtitle">Sign in, create games, invite specific players by seat, or open your table to anyone. You can be active in multiple games at once and jump between them from one dashboard.</p>
+        <div class="hero-strip">
+          <span class="chip">Invite by Seat</span>
+          <span class="chip">Open Match</span>
+          <span class="chip">Multi-Game Ready</span>
+          <span class="chip">Session + CSRF Protected</span>
+        </div>
+      </article>
+
+      <aside class="panel">
+        <div class="auth-grid">
+          <div id="authSignedOut">
+          <div class="row">
+            <div>
+              <label for="loginUsername">Username</label>
+              <input id="loginUsername" value="chartb" autocomplete="username">
+            </div>
+            <div>
+              <label for="loginPassword">Password</label>
+              <input id="loginPassword" type="password" autocomplete="current-password">
+            </div>
+          </div>
+          <div class="row">
+            <button onclick="loginLocal()">Sign In</button>
+            <button class="secondary" onclick="logoutUser()">Sign Out</button>
+          </div>
+
+          <hr class="divider">
+
+          <div class="row">
+            <div>
+              <label for="registerUsername">New Username</label>
+              <input id="registerUsername" placeholder="new_player">
+            </div>
+            <div>
+              <label for="registerEmail">Email (optional)</label>
+              <input id="registerEmail" placeholder="new_player@45s.local">
+            </div>
+          </div>
+          <div>
+            <label for="registerPassword">New Password</label>
+            <input id="registerPassword" type="password" placeholder="8+ characters">
+          </div>
+          <button class="accent" onclick="registerUser()">Create Account</button>
+
+          </div>
+
+          <div id="authSignedIn" class="account-card">
+            <div class="account-title">Signed In</div>
+            <div class="account-meta" id="currentUserInfo"></div>
+            <button class="secondary" onclick="logoutUser()">Sign Out</button>
+          </div>
+
+          <div id="welcome" class="welcome"></div>
+          <div id="authStatus" class="status"></div>
+          <div class="mono muted" id="authMeta">Not authenticated</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="dash">
+      <article class="card create">
+        <h3>Create Game</h3>
+        <div class="grid-2">
+          <div>
+            <label for="targetScore">Target Score</label>
+            <select id="targetScore">
+              <option value="120">120</option>
+              <option value="45">45</option>
+            </select>
+          </div>
+          <div>
+            <label for="inviteMode">Invite Mode</label>
+            <select id="inviteMode" onchange="toggleInviteMode()">
+              <option value="open">open</option>
+              <option value="specific">specific</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label for="aiSeats">AI Seats (comma list from 0..3)</label>
+          <input id="aiSeats" value="2" placeholder="e.g. 2">
+        </div>
+
+        <div id="specificInvites" class="hidden">
+          <label>Seat Invites (user IDs)</label>
+          <div class="invite-row">
+            <input id="inviteSeat1" value="2" placeholder="Seat 1 user_id">
+            <input id="inviteSeat3" value="4" placeholder="Seat 3 user_id">
+          </div>
+        </div>
+
+        <button class="mt-10" onclick="createGame()">Create Game</button>
+        <div id="createStatus" class="status"></div>
+      </article>
+
+      <article class="card mygames">
+        <h3>My Games</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Game</th>
+                <th>Status</th>
+                <th>Ruleset</th>
+                <th>Target</th>
+                <th>Phase</th>
+                <th>Board</th>
+              </tr>
+            </thead>
+            <tbody id="myGamesBody"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card joinable">
+        <h3>Joinable Games</h3>
+        <p class="muted">Shows games where you are invited or where open human seats are available.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Game</th>
+                <th>Status</th>
+                <th>Invited</th>
+                <th>Open Seats</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="joinableGamesBody"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      userId: null,
+      username: null,
+      role: null,
+      csrfToken: '',
+      basePath: '/45s',
+      nextPath: null,
+    };
+
+    function byId(id) { return document.getElementById(id); }
+
+    function jsonHeaders(withCsrf = false) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (withCsrf && state.csrfToken) {
+        headers['X-CSRF-Token'] = state.csrfToken;
+      }
+      return headers;
+    }
+
+    function setStatus(id, text, level = 'muted') {
+      const el = byId(id);
+      el.textContent = text;
+      el.className = 'status' + (level === 'error' ? ' error' : level === 'success' ? ' success' : '');
+    }
+
+    function setAuthMeta() {
+      const meta = byId('authMeta');
+      if (state.userId) {
+        const displayName = state.username || ('user_' + state.userId);
+        meta.textContent = 'Signed in as #' + state.userId + ' (' + displayName + ', ' + state.role + ')';
+      } else {
+        meta.textContent = 'Not authenticated';
+      }
+    }
+
+    function safeNextPath(raw) {
+      if (!raw) return null;
+      if (typeof raw !== 'string') return null;
+      if (!raw.startsWith('/45s/')) return null;
+      return raw;
+    }
+
+    function syncAuthUi() {
+      const signedOut = byId('authSignedOut');
+      const signedIn = byId('authSignedIn');
+      const current = byId('currentUserInfo');
+
+      if (state.userId) {
+        signedOut.style.display = 'none';
+        signedIn.style.display = 'block';
+        const displayName = state.username || ('user_' + state.userId);
+        current.textContent = displayName + ' | id #' + state.userId + ' | role ' + (state.role || 'player');
+      } else {
+        signedOut.style.display = 'block';
+        signedIn.style.display = 'none';
+        current.textContent = '';
+      }
+    }
+
+    function storeSessionDisplayName() {
+      if (state.username) {
+        localStorage.setItem('fortyfives_username', state.username);
+      }
+    }
+
+    function loadSessionDisplayName() {
+      if (!state.username) {
+        const cached = localStorage.getItem('fortyfives_username');
+        if (cached) state.username = cached;
+      }
+    }
+
+    function maybeRedirectAfterAuth() {
+      const next = safeNextPath(state.nextPath);
+      if (next) {
+        window.location.href = next;
+      }
+    }
+
+    async function api(path, method = 'GET', body = null, withCsrf = false) {
+      const opts = { method, headers: jsonHeaders(withCsrf), credentials: 'same-origin' };
+      if (body !== null) {
+        opts.body = JSON.stringify(body);
+      }
+
+      const res = await fetch(state.basePath + path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data && data.error) ? data.error : ('http_' + res.status));
+      }
+      return data;
+    }
+
+    async function refreshAuth() {
+      try {
+        const me = await api('/api/auth/me');
+        state.userId = me.user_id || null;
+        state.role = me.role || null;
+        state.csrfToken = me.csrf_token || '';
+        if (!me.authenticated) {
+          state.username = null;
+        } else {
+          loadSessionDisplayName();
+        }
+      } catch (_) {
+        state.userId = null;
+        state.username = null;
+        state.role = null;
+        state.csrfToken = '';
+      }
+      setAuthMeta();
+      syncAuthUi();
+    }
+
+    async function loginLocal() {
+      setStatus('authStatus', 'Signing in...', 'muted');
+      try {
+        const data = await api('/api/auth/login', 'POST', {
+          username: byId('loginUsername').value.trim(),
+          password: byId('loginPassword').value,
+        });
+        state.userId = data.user_id;
+        state.username = data.username;
+        state.role = data.role;
+        state.csrfToken = data.csrf_token || state.csrfToken;
+        storeSessionDisplayName();
+        setAuthMeta();
+        syncAuthUi();
+        setStatus('authStatus', 'Sign-in successful.', 'success');
+        await refreshLobby();
+        maybeRedirectAfterAuth();
+      } catch (err) {
+        setStatus('authStatus', 'Sign-in failed: ' + err.message, 'error');
+      }
+    }
+
+    async function logoutUser() {
+      if (!state.userId) {
+        setStatus('authStatus', 'Already signed out.', 'muted');
+        return;
+      }
+      try {
+        await api('/api/auth/logout', 'POST', {}, true);
+        state.userId = null;
+        state.username = null;
+        state.role = null;
+        state.csrfToken = '';
+        localStorage.removeItem('fortyfives_username');
+        setAuthMeta();
+        syncAuthUi();
+        setStatus('authStatus', 'Signed out.', 'success');
+        renderRows('myGamesBody', []);
+        renderRows('joinableGamesBody', []);
+      } catch (err) {
+        setStatus('authStatus', 'Sign-out failed: ' + err.message, 'error');
+      }
+    }
+
+    async function registerUser() {
+      setStatus('authStatus', 'Creating account...', 'muted');
+      try {
+        const username = byId('registerUsername').value.trim();
+        const email = byId('registerEmail').value.trim();
+        const password = byId('registerPassword').value;
+
+        const data = await api('/api/auth/register', 'POST', {
+          username,
+          email: email === '' ? null : email,
+          password,
+        });
+
+        state.userId = data.user_id;
+        state.username = username;
+        state.role = data.role;
+        state.csrfToken = data.csrf_token || state.csrfToken;
+        storeSessionDisplayName();
+        setAuthMeta();
+        syncAuthUi();
+
+        const welcome = byId('welcome');
+        welcome.style.display = 'block';
+        welcome.textContent = 'Welcome, ' + username + '. Your account is ready and you are signed in.';
+
+        setStatus('authStatus', 'Account created.', 'success');
+        await refreshLobby();
+        maybeRedirectAfterAuth();
+      } catch (err) {
+        setStatus('authStatus', 'Registration failed: ' + err.message, 'error');
+      }
+    }
+
+    function parseSeatList(raw) {
+      if (!raw.trim()) return [];
+      return raw
+        .split(',')
+        .map(s => Number(s.trim()))
+        .filter(n => Number.isInteger(n) && n >= 0 && n <= 3);
+    }
+
+    function toggleInviteMode() {
+      const mode = byId('inviteMode').value;
+      byId('specificInvites').className = mode === 'specific' ? '' : 'hidden';
+    }
+
+    async function createGame() {
+      if (!state.userId) {
+        setStatus('createStatus', 'Please sign in first.', 'error');
+        return;
+      }
+
+      try {
+        const inviteMode = byId('inviteMode').value;
+        const payload = {
+          target_score: Number(byId('targetScore').value),
+          ruleset: 'chartrand',
+          user_id: state.userId,
+          invite_mode: inviteMode,
+          ai_seats: parseSeatList(byId('aiSeats').value),
+        };
+
+        if (inviteMode === 'specific') {
+          const seat1 = Number(byId('inviteSeat1').value);
+          const seat3 = Number(byId('inviteSeat3').value);
+          payload.invites = [];
+          if (Number.isInteger(seat1) && seat1 > 0) payload.invites.push({ seat: 1, user_id: seat1 });
+          if (Number.isInteger(seat3) && seat3 > 0) payload.invites.push({ seat: 3, user_id: seat3 });
+        }
+
+        const created = await api('/api/lobby/create_game', 'POST', payload, true);
+        setStatus('createStatus', 'Game #' + created.game_id + ' created.', 'success');
+        await refreshLobby();
+      } catch (err) {
+        setStatus('createStatus', 'Create failed: ' + err.message, 'error');
+      }
+    }
+
+    async function joinGame(gameId) {
+      if (!state.userId) {
+        setStatus('authStatus', 'Please sign in first.', 'error');
+        return;
+      }
+      try {
+        const joined = await api('/api/lobby/join_game', 'POST', {
+          game_id: gameId,
+          user_id: state.userId,
+        }, true);
+        setStatus('authStatus', 'Joined game #' + gameId + ' at seat ' + joined.seat + '.', 'success');
+        await refreshLobby();
+      } catch (err) {
+        setStatus('authStatus', 'Join failed: ' + err.message, 'error');
+      }
+    }
+
+    function renderRows(tbodyId, rows, renderer) {
+      const body = byId(tbodyId);
+      body.innerHTML = '';
+      if (!rows || rows.length === 0) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="6" class="muted">No rows yet.</td>';
+        body.appendChild(tr);
+        return;
+      }
+      rows.forEach(r => body.appendChild(renderer(r)));
+    }
+
+    function renderMyGames(games) {
+      renderRows('myGamesBody', games, g => {
+        const tr = document.createElement('tr');
+        const boardLink = '<a href="' + state.basePath + '/game.html?game_id=' + encodeURIComponent(g.id) + '">Open</a>';
+        tr.innerHTML =
+          '<td class="mono">#' + g.id + '</td>' +
+          '<td>' + g.status + '</td>' +
+          '<td>' + g.ruleset + '</td>' +
+          '<td>' + g.target_score + '</td>' +
+          '<td>' + (g.current_phase || '-') + '</td>' +
+          '<td>' + boardLink + '</td>';
+        return tr;
+      });
+    }
+
+    function renderJoinable(games) {
+      renderRows('joinableGamesBody', games, g => {
+        const tr = document.createElement('tr');
+        const btn = document.createElement('button');
+        btn.textContent = 'Join';
+        btn.onclick = () => joinGame(Number(g.id));
+
+        const tdAction = document.createElement('td');
+        tdAction.appendChild(btn);
+
+        tr.innerHTML =
+          '<td class="mono">#' + g.id + '</td>' +
+          '<td>' + g.status + '</td>' +
+          '<td>' + (Number(g.invited) === 1 ? 'yes' : 'no') + '</td>' +
+          '<td>' + (g.open_human_seats ?? '-') + '</td>';
+        tr.appendChild(tdAction);
+        return tr;
+      });
+    }
+
+    async function refreshLobby() {
+      if (!state.userId) {
+        renderRows('myGamesBody', []);
+        renderRows('joinableGamesBody', []);
+        return;
+      }
+
+      try {
+        const [mine, joinable] = await Promise.all([
+          api('/api/lobby/my_games?user_id=' + encodeURIComponent(state.userId)),
+          api('/api/lobby/list_joinable?user_id=' + encodeURIComponent(state.userId)),
+        ]);
+
+        renderMyGames(mine.games || []);
+        renderJoinable(joinable.games || []);
+      } catch (err) {
+        setStatus('authStatus', 'Lobby refresh failed: ' + err.message, 'error');
+      }
+    }
+
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      state.nextPath = safeNextPath(params.get('next'));
+      toggleInviteMode();
+      await refreshAuth();
+      await refreshLobby();
+    })();
+  </script>
+</body>
+</html>

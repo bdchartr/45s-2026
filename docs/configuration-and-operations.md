@@ -4,6 +4,7 @@ Last updated: 2026-04-13
 
 ## Application URLs
 - Root: https://wkapp.com/45s/
+- Lobby page: https://wkapp.com/45s/lobby.html
 - Health: https://wkapp.com/45s/health
 - DB Health: https://wkapp.com/45s/api/system/db-health
 - Admin page: https://wkapp.com/45s/admin.html
