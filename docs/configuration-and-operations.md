@@ -5,6 +5,7 @@ Last updated: 2026-04-13
 ## Application URLs
 - Root: https://wkapp.com/45s/
 - Lobby page: https://wkapp.com/45s/lobby.html
+- Game board page: https://wkapp.com/45s/game.html?game_id={id}
 - Health: https://wkapp.com/45s/health
 - DB Health: https://wkapp.com/45s/api/system/db-health
 - Admin page: https://wkapp.com/45s/admin.html
@@ -86,6 +87,76 @@ Recommended role assignment for testing:
 - API validation now rejects unknown user_id values in create_game/join_game with HTTP 400.
 - Stats endpoint aggregates data from users, games, game_players, and game_events.
 - Admin and stats APIs now require authenticated session user with owner/admin role (acting_user_id removed).
+- Root browser traffic redirects to /45s/lobby.html.
+- Static frontend is currently served from root-level HTML files mirrored into public/ for deployment.
+- Main frontend entry points are currently lobby.html, game.html, and admin.html.
+
+## Current Frontend Session Behavior
+- Auth is session-cookie based.
+- Lobby page calls GET /45s/api/auth/me on load to determine current session state.
+- When authenticated:
+  - the sign-in/register form is hidden
+  - current user information is shown
+  - lobby lists are loaded for the signed-in user
+- When unauthenticated:
+  - sign-in/register form is shown
+  - game page displays a sign-in link back to lobby with a safe next= return path
+- Logout requires CSRF and clears the session cookie-backed auth state.
+
+## Current Game Board Behavior
+- Board URL is /45s/game.html?game_id={id}.
+- Viewer perspective is fixed:
+  - south = viewer seat
+  - west = next clockwise seat from viewer
+  - north = partner across from viewer
+  - east = remaining opponent
+- Dealer seat is visually marked.
+- Current turn seat is visually marked.
+- Cards played in the current trick render in the center of the table.
+- Won tricks are shown as rotated side stacks using explicit trick_won events when available.
+- Board includes a Hand Flow tracker with these phases:
+  - deal
+  - bid phase
+  - bid winner + kitty
+  - discard
+  - restock to 5
+  - trick rounds 1..5
+
+## Current Game State API Shape
+- GET /45s/api/game/get_state returns:
+  - game
+  - players
+  - events
+  - viewer_seat
+  - viewer_hand
+- get_state requires authenticated session user.
+- Non-admin/non-owner users may only read games they are seated in.
+- viewer_hand is currently derived deterministically from game_id plus card_played history.
+
+## Current Event Types Used By Board
+- game_created
+- bid_action
+- forced_dealer_bid
+- bidding_closed
+- kitty_picked_up
+- discard_completed
+- restock_completed
+- card_played
+- trick_won
+- player_joined
+
+## Current Runtime Constraints
+- The current runtime supports:
+  - lobby creation/joining
+  - bidding turn progression
+  - card play turn progression
+  - trick winner event emission
+  - board-level hand and trick visualization
+- The current runtime does not yet implement a full authoritative 45s hand engine:
+  - no persisted hands/deck/kitty tables yet
+  - no server-side discard and draw mechanics yet
+  - no full legal-move enforcement from true hand state yet
+  - no final hand scoring/game-over pipeline yet
 
 ## Lobby Invite Modes
 - create_game supports two invite styles:
@@ -121,6 +192,19 @@ Recommended role assignment for testing:
   - POST /45s/api/lobby/join_game
   - POST /45s/api/game/submit_bid
   - POST /45s/api/game/play_card
+
+## Known Active Gaps
+- Some older game rows may contain event payloads that do not fully match newer board expectations.
+- get_state has been hardened against malformed event payloads, but old historical data may still limit what the board can infer.
+- Session continuity depends on the browser carrying the PHP session cookie across lobby and game page requests.
+
+## Next Steps
+- Build a true authoritative hand/deck/kitty model in persistence instead of deriving viewer_hand from game_id.
+- Implement discard and replacement draw as first-class actions and events.
+- Add explicit trump declaration and true 45s trump/lead legality rules.
+- Replace manual card-code entry with clickable playable cards from the rendered hand.
+- Add score-hand, set tracking, bid-out, and game-over behavior.
+- Add board-level polling or incremental event refresh instead of full-state refresh every cycle.
 
 ## Rate Limit Policy
 - Auth endpoints enforce request limits and return HTTP 429 on exhaustion.

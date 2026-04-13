@@ -1,5 +1,7 @@
 # Forty-Fives (45s) Implementation Details
 
+Last updated: 2026-04-13
+
 ## 1. Goals and Constraints
 
 - Build a production-ready PWA for the Chartrand/Newfoundland 45s ruleset.
@@ -14,15 +16,46 @@
 
 ## 2. High-Level Architecture
 
-- Client: PWA built with Vue 3, installable, offline-capable shell.
-- Server: Slim 4 on PHP 8.x, JSON API endpoints.
-- Database: MySQL (InnoDB).
-- Realtime strategy:
-  - Primary: long-polling (shared hosting safe default).
-  - Optional: WebSocket only if hosting later supports a persistent process.
-- Session/auth strategy:
-  - PHP sessions + secure cookies for standard login.
-  - Google OAuth callback endpoint for social login.
+- Current client: static HTML/CSS/JavaScript pages (`lobby.html`, `game.html`, `admin.html`).
+- Current server: Slim 4 on PHP with JSON API endpoints.
+- Current database: MySQL (InnoDB).
+- Current realtime strategy:
+  - full state refresh from browser pages
+  - event-log-driven board rendering
+- Current session/auth strategy:
+  - PHP sessions + secure cookies for local auth
+  - CSRF tokens fetched from `auth/me` and sent on protected POST requests
+  - Google login endpoint exists, but local auth is the main verified path
+
+## 2.0 Current Implementation Status
+
+What is live now:
+- local register/login/logout and session-backed auth state
+- owner/admin-protected stats and admin APIs
+- lobby UI with session-aware signed-in/signed-out states
+- create game with AI seats
+- open-invite and seat-specific invite modes
+- multi-game support via `my_games` and `list_joinable`
+- game board with fixed viewer perspective (south = current user)
+- dealer marker, turn marker, center trick area, and won-trick side stacks
+- explicit lifecycle events for:
+  - `bidding_closed`
+  - `kitty_picked_up`
+  - `discard_completed`
+  - `restock_completed`
+  - `trick_won`
+- `get_state` currently returns `viewer_seat` and `viewer_hand`
+
+What is still partial or inferred:
+- `viewer_hand` is currently reconstructed deterministically from `game_id` plus `card_played` history rather than from persisted hand records
+- the board still uses manual card-code entry for play actions
+- the hand flow tracker is partially event-driven and partially phase-derived
+
+What is not fully authoritative yet:
+- trump declaration
+- true discard/draw actions backed by persisted card state
+- full 45s move legality based on authoritative hand contents
+- hand scoring, sets, bid-out, and game-over resolution
 
 ## 2.1 Module Boundaries (Refined)
 
@@ -123,16 +156,16 @@ All inter-module communication should use explicit DTOs so refactors do not leak
 
 ## 3. Tech Stack (Concrete)
 
-### Frontend (PWA)
+### Frontend (Current)
 
-- Vue 3 + Pinia + Vite.
-- TypeScript on client preferred for safer state and event modeling.
-- Service worker for app shell caching and static assets.
-- Web App Manifest for install prompt, icons, standalone mode.
-- IndexedDB for lightweight client cache:
-  - recent games list
-  - reconnect metadata (last game id, seat)
+- Static HTML + CSS + vanilla JavaScript.
 - Fetch API for JSON calls to PHP backend.
+- Root and `public/` copies of the main pages are mirrored for deployment compatibility.
+
+### Frontend (Planned / Deferred)
+
+- Vue 3 + Pinia + Vite remain a possible later migration path.
+- Service worker, installability, and richer offline behavior remain planned rather than current production behavior.
 
 ### Backend
 
@@ -220,6 +253,10 @@ All inter-module communication should use explicit DTOs so refactors do not leak
 - Every action is validated against current phase and seat turn.
 - Event-sourced game log records each action in order.
 
+Current practical note:
+- The event log is the main source of truth for current board rendering.
+- Some gameplay state is still inferred from events rather than stored explicitly.
+
 Game phases:
 1. `lobby`
 2. `deal`
@@ -230,7 +267,21 @@ Game phases:
 7. `score_hand`
 8. `game_over`
 
+Current live phase usage is narrower than the target model. The phases actively exercised today are primarily:
+- `bidding`
+- `trick_play`
+
 ## 6. Database Schema (Initial)
+
+Current live schema is simpler than the original target model.
+
+Tables currently in active production use:
+- `users`
+- `games`
+- `game_players`
+- `game_events`
+
+Target tables such as `hands`, `tricks`, and `scores` are still design targets and not the current live implementation.
 
 ### users
 - `id` PK
@@ -301,6 +352,37 @@ Game phases:
 - `created_at`
 
 ## 7. API Surface (V1)
+
+Current production implementation uses Slim routes under `/45s/api/...` rather than separate endpoint files.
+
+Current live auth routes:
+- `POST /45s/api/auth/register`
+- `POST /45s/api/auth/login`
+- `POST /45s/api/auth/google/login`
+- `POST /45s/api/auth/logout`
+- `GET /45s/api/auth/me`
+- `GET /45s/api/auth/csrf`
+
+Current live lobby routes:
+- `POST /45s/api/lobby/create_game`
+- `POST /45s/api/lobby/join_game`
+- `GET /45s/api/lobby/my_games?user_id=...`
+- `GET /45s/api/lobby/list_joinable?user_id=...`
+
+Current live gameplay routes:
+- `GET /45s/api/game/get_state?game_id=...`
+- `GET /45s/api/game/poll_events?game_id=...&after_seq=...`
+- `POST /45s/api/game/submit_bid`
+- `POST /45s/api/game/play_card`
+
+Current live admin/system routes:
+- `GET /45s/health`
+- `GET /45s/api/system/db-health`
+- `GET /45s/api/stats/summary`
+- `GET /45s/api/admin/users`
+- `GET /45s/api/admin/games`
+- `POST /45s/api/admin/users/create`
+- `POST /45s/api/admin/users/role`
 
 Auth:
 - `POST /api/auth/register.php`
@@ -403,6 +485,14 @@ Suggested post-deploy checks:
 3. Create game, join second seat, execute one full hand.
 4. Verify database writes in `games`, `hands`, `game_events`, `scores`.
 
+Current practical post-deploy checks:
+1. `GET /45s/` redirects to `lobby.html` and returns 200 in browser flow.
+2. `GET /45s/api/auth/me` returns clean JSON with `csrf_token`.
+3. Session login on lobby hides sign-in/register and shows current user info.
+4. `GET /45s/api/game/get_state?game_id=...` returns 200 for a seated authenticated user.
+5. `viewer_hand` is non-empty for a newly created active game.
+6. Board loads without `refresh_failed: 500` and gameplay POST routes return business errors instead of transport errors.
+
 ## 12. Milestone Plan
 
 1. Foundation
@@ -429,3 +519,23 @@ Suggested post-deploy checks:
 - Whether to support WebSockets later if hosting changes.
 - Whether to allow spectators in live games.
 - Exact penalty behavior for revoke/misplay in production ruleset.
+
+## 14. Next Steps
+
+Highest priority backend work:
+- replace inferred `viewer_hand` with authoritative persisted hand/deck/kitty state
+- implement explicit trump declaration and storage
+- implement discard and replacement draw as true actions with authoritative card state updates
+- add hand scoring, set tracking, bid-out, and game-over processing
+- add stronger `get_state` and event-payload regression tests
+
+Highest priority frontend work:
+- replace manual card-code entry with clickable cards from the rendered hand
+- show current contract, trump suit, trick number, and team trick totals directly on the board
+- replace generic player id labels with usernames when available
+- improve polling to use incremental event refresh where possible
+
+Operational next steps:
+- normalize or clean malformed legacy event rows if any remain in production
+- document the current deployment flow and session behavior in one short operator runbook
+- add a narrow smoke script for `login -> open board -> get_state -> submit action`
