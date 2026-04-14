@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace FortyFives\Infrastructure\Persistence;
 
-final class GameRepository
+class GameRepository
 {
     public function __construct(private readonly Database $db)
     {

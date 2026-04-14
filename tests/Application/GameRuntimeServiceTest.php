@@ -284,6 +284,7 @@ final class GameRuntimeServiceTest extends TestCase
             ['event_type' => 'discard_action'],
             ['event_type' => 'discard_action'],
             ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
         ]);
         // 4th discard → should trigger trick play start
         // For trick start we need: bid_winner_seat = 0

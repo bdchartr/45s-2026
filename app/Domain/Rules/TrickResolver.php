@@ -32,8 +32,8 @@ final class TrickResolver
 
     private function beats(Card $candidate, Card $currentBest, string $leadSuit, string $trumpSuit): bool
     {
-        $candidateTrump = $candidate->suit === $trumpSuit;
-        $bestTrump = $currentBest->suit === $trumpSuit;
+        $candidateTrump = $this->ranker->isTrump($candidate, $trumpSuit);
+        $bestTrump = $this->ranker->isTrump($currentBest, $trumpSuit);
 
         if ($candidateTrump && !$bestTrump) {
             return true;

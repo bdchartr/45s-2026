@@ -55,8 +55,8 @@ final class LegalMoveValidatorTest extends TestCase
         // Must play a club when clubs led (trump = H)
         $this->assertTrue($this->validator->canPlayCard($hand, $this->card('2C'), 'C', 'H'));
         $this->assertTrue($this->validator->canPlayCard($hand, $this->card('5C'), 'C', 'H'));
-        // Cannot play KH (non-trump, non-led) when holding clubs
-        $this->assertFalse($this->validator->canPlayCard($hand, $this->card('KH'), 'C', 'H'));
+        // KH is trump (trump=H), so playing trump is always legal even with clubs in hand
+        $this->assertTrue($this->validator->canPlayCard($hand, $this->card('KH'), 'C', 'H'));
     }
 
     // -------------------------------------------------------------------------
@@ -151,11 +151,11 @@ final class LegalMoveValidatorTest extends TestCase
     public function testAceOfHeartsCountedAsTrumpWhenHeartsTrump(): void
     {
         // Trump = H; non-trump suit led; AH is trump so can renegue
-        $hand = $this->cards('AH', '2C', 'KC');
+        $hand = $this->cards('AH', '2C', '3D');
         // Clubs led; AH is trump → legal to play AH instead of following clubs
         $this->assertTrue($this->validator->canPlayCard($hand, $this->card('AH'), 'C', 'H'));
-        // Must play a club (or trump); playing KC (non-trump, non-led) is not legal
-        $this->assertFalse($this->validator->canPlayCard($hand, $this->card('2C'), 'C', 'H'));
+        // Must play a club (or trump); playing 3D (non-trump, non-led) is not legal while holding clubs
+        $this->assertFalse($this->validator->canPlayCard($hand, $this->card('3D'), 'C', 'H'));
         // 2C is a club → legal to follow suit
         $this->assertTrue($this->validator->canPlayCard($hand, $this->card('2C'), 'C', 'H'));
     }

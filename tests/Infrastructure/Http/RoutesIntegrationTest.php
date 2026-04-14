@@ -127,7 +127,6 @@ final class RoutesIntegrationTest extends TestCase
     private function buildApp(): \Slim\App
     {
         $app = AppFactory::create();
-        $app->setBasePath('/45s');
         $app->addBodyParsingMiddleware();
         $app->addRoutingMiddleware();
         Routes::register($app);
