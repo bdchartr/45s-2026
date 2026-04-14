@@ -40,7 +40,14 @@ final class GameRuntimeService
             return ActionResult::rejected('game_not_found', 'Game does not exist.');
         }
 
-        if ((int) ($state['current_turn_seat'] ?? -1) !== $command->seat) {
+        // Discard phase allows any seated player to submit without strict turn order.
+        // The discard handler itself enforces phase, duplicate-discard prevention, and
+        // turn gating for the 6-player dealer extra-draw step.
+        $bypassTurnCheck =
+            $command->actionType === 'discard_cards'
+            && ($state['current_phase'] ?? null) === 'discard_phase';
+
+        if (!$bypassTurnCheck && (int) ($state['current_turn_seat'] ?? -1) !== $command->seat) {
             return ActionResult::rejected('not_your_turn', 'It is not this seat\'s turn.');
         }
 
@@ -207,13 +214,68 @@ final class GameRuntimeService
                 return ActionResult::rejected('no_hand', 'No active hand found.');
             }
 
-            $handId       = (int) $hand['id'];
-            $trump        = (string) ($hand['trump_suit'] ?? '');
-            $bidWinner    = (int) ($hand['bid_winner_seat'] ?? -1);
-            $isBidWinner  = $command->seat === $bidWinner;
-            $currentCards = $this->games->getSeatCards($handId, $command->seat) ?? [];
+            $handId              = (int) $hand['id'];
+            $trump               = (string) ($hand['trump_suit'] ?? '');
+            $bidWinner           = (int) ($hand['bid_winner_seat'] ?? -1);
+            $dealerSeat          = (int) ($hand['dealer_seat'] ?? 0);
+            $isBidWinner         = $command->seat === $bidWinner;
+            $isDealerExtraDraw   = (bool) ($hand['dealer_extra_draw_pending'] ?? false);
+            $playerCount         = $this->games->getPlayerCount($gameId);
+            $currentCards        = $this->games->getSeatCards($handId, $command->seat) ?? [];
 
-            // Validate discards are in hand
+            // ---------------------------------------------------------------
+            // 6-player dealer extra-draw step
+            // ---------------------------------------------------------------
+            if ($isDealerExtraDraw) {
+                if ($command->seat !== $dealerSeat) {
+                    return ActionResult::rejected('not_your_turn', 'Only the dealer may discard during the extra-draw step.');
+                }
+
+                $remaining = $currentCards;
+                foreach ($discards as $code) {
+                    $idx = array_search($code, $remaining, true);
+                    if ($idx === false) {
+                        return ActionResult::rejected('card_not_in_hand', "Card {$code} not in hand.");
+                    }
+                    unset($remaining[$idx]);
+                    $remaining = array_values($remaining);
+                }
+                if (count($remaining) !== 5) {
+                    return ActionResult::rejected(
+                        'wrong_discard_count',
+                        'After dealer extra-draw discard, hand must have exactly 5 cards; would have ' . count($remaining) . '.'
+                    );
+                }
+
+                $this->games->updateSeatCards($handId, $command->seat, $remaining);
+                $this->games->setDealerExtraDrawPending($handId, false);
+                $this->games->appendEvent($gameId, 'dealer_draw_discard', $command->seat, [
+                    'seat'      => $command->seat,
+                    'discarded' => $discards,
+                    'kept'      => $remaining,
+                    'at'        => gmdate('c'),
+                ]);
+
+                return $this->startTrickPlay($gameId, $state, $handId, $bidWinner);
+            }
+
+            // ---------------------------------------------------------------
+            // Normal discard — prevent duplicate submissions
+            // ---------------------------------------------------------------
+            $trumpEvent = $this->games->latestEventByType($gameId, 'trump_declared');
+            if ($trumpEvent !== null) {
+                $afterSeq    = (int) $trumpEvent['seq_no'];
+                $priorEvents = $this->games->listEventsAfter($gameId, $afterSeq, 20);
+                foreach ($priorEvents as $e) {
+                    if ($e['event_type'] === 'discard_action' && (int) ($e['actor_seat'] ?? -1) === $command->seat) {
+                        return ActionResult::rejected('already_discarded', 'This seat has already discarded this hand.');
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------------
+            // Validate cards to discard
+            // ---------------------------------------------------------------
             $remaining = $currentCards;
             foreach ($discards as $code) {
                 $idx = array_search($code, $remaining, true);
@@ -224,38 +286,55 @@ final class GameRuntimeService
                 $remaining = array_values($remaining);
             }
 
-            // Trump discard restriction: bid winner may not discard trump unless forced (hand > 5 cards)
-            if ($isBidWinner && count($remaining) > 5 && $trump !== '') {
-                foreach ($discards as $code) {
-                    $card = $this->parseCardCode($code);
-                    if ($card !== null && $this->ranker->isTrump($card, $trump)) {
-                        // Only allowed if they have more than 5 trump cards — simplification:
-                        // flag as error unless hand would still have 5 cards
-                        if (count($remaining) > 5) {
-                            // Still too many — keep discarding, this trump discard not yet forced
-                            // We allow it only if it's truly unavoidable (all remaining are trump)
-                            $nonTrumpRemaining = array_filter($remaining, function (string $c) use ($trump): bool {
-                                $parsed = $this->parseCardCode($c);
-                                return $parsed !== null && !$this->ranker->isTrump($parsed, $trump);
-                            });
-                            if (count($nonTrumpRemaining) > 0) {
-                                return ActionResult::rejected(
-                                    'cannot_discard_trump',
-                                    "Cannot discard trump ({$code}) while non-trump cards remain."
-                                );
-                            }
-                        }
+            // 6-player: max 3 replacements per player (bid winner included — they start with 8, discard 3)
+            if ($playerCount === 6 && count($discards) > 3) {
+                return ActionResult::rejected(
+                    'too_many_discards',
+                    'In a 6-player game each player may replace at most 3 cards.'
+                );
+            }
+
+            // Trump discard restriction for bid winner: cannot discard trump while
+            // sufficient non-trump cards exist to cover all required discards.
+            if ($isBidWinner && $trump !== '') {
+                $discardingTrump = array_filter(
+                    $discards,
+                    fn(string $c) => ($card = $this->parseCardCode($c)) !== null && $this->ranker->isTrump($card, $trump)
+                );
+                if (!empty($discardingTrump)) {
+                    $nonTrumpCount   = count(array_filter(
+                        $currentCards,
+                        fn(string $c) => ($card = $this->parseCardCode($c)) !== null && !$this->ranker->isTrump($card, $trump)
+                    ));
+                    $requiredDiscards = count($currentCards) - 5;
+                    if ($nonTrumpCount >= $requiredDiscards) {
+                        $firstTrump = (string) reset($discardingTrump);
+                        return ActionResult::rejected(
+                            'cannot_discard_trump',
+                            "Cannot discard trump ({$firstTrump}) while sufficient non-trump cards remain."
+                        );
                     }
                 }
             }
 
-            // Enforce bid winner must discard down to exactly 5 after kitty (8 cards → discard 3)
-            // Other players may discard 0–5 cards
-            $targetSize = 5;
-            if (count($remaining) !== $targetSize) {
+            // ---------------------------------------------------------------
+            // Draw replacement cards from deck to refill to 5
+            // ---------------------------------------------------------------
+            $drawCount = 5 - count($remaining);
+            if ($drawCount > 0) {
+                $deckRemaining = $this->games->getDeckRemaining($handId);
+                if (count($deckRemaining) < $drawCount) {
+                    return ActionResult::rejected('deck_empty', 'Not enough cards remaining in deck to refill hand.');
+                }
+                $drawn     = array_splice($deckRemaining, 0, $drawCount);
+                $remaining = array_merge($remaining, $drawn);
+                $this->games->setDeckRemaining($handId, $deckRemaining);
+            }
+
+            if (count($remaining) !== 5) {
                 return ActionResult::rejected(
                     'wrong_discard_count',
-                    "After discard hand must have {$targetSize} cards; would have " . count($remaining) . '.'
+                    'After discard hand must have 5 cards; would have ' . count($remaining) . '.'
                 );
             }
 
@@ -267,16 +346,38 @@ final class GameRuntimeService
                 'at'        => gmdate('c'),
             ]);
 
-            // Check if all 4 seats have discarded
-            $discardEvents = $this->games->countEventsByType($gameId, 'discard_action');
-            // Count discards for this hand only (after trump_declared)
+            // ---------------------------------------------------------------
+            // Check if all players have now discarded
+            // ---------------------------------------------------------------
             $discardCountThisHand = $this->countDiscardActionsThisHand($gameId);
 
-            if ($discardCountThisHand >= 4) {
-                return $this->startTrickPlay($gameId, $state, $handId, (int) ($hand['bid_winner_seat'] ?? 0));
+            if ($discardCountThisHand >= $playerCount) {
+                if ($playerCount === 6) {
+                    // Give dealer all remaining undealt cards; they must discard back to 5.
+                    $deckRemaining = $this->games->getDeckRemaining($handId);
+                    if (!empty($deckRemaining)) {
+                        $dealerCards = array_merge(
+                            $this->games->getSeatCards($handId, $dealerSeat) ?? [],
+                            $deckRemaining
+                        );
+                        $this->games->updateSeatCards($handId, $dealerSeat, $dealerCards);
+                        $this->games->setDeckRemaining($handId, []);
+                        $this->games->setDealerExtraDrawPending($handId, true);
+                        $this->games->setPhaseAndTurn($gameId, 'discard_phase', $dealerSeat);
+                        $this->games->appendEvent($gameId, 'dealer_draw_extra', $dealerSeat, [
+                            'extra_cards' => $deckRemaining,
+                            'at'          => gmdate('c'),
+                        ]);
+                        return ActionResult::accepted([
+                            'phase'             => 'discard_phase',
+                            'current_turn_seat' => $dealerSeat,
+                        ]);
+                    }
+                    // No extra cards (edge case) — fall through to trick play
+                }
+                return $this->startTrickPlay($gameId, $state, $handId, $bidWinner);
             }
 
-            // Still waiting for other players; keep same phase, no turn change
             return ActionResult::accepted([
                 'phase'             => 'discard_phase',
                 'current_turn_seat' => (int) $state['current_turn_seat'],
@@ -286,7 +387,6 @@ final class GameRuntimeService
 
     private function countDiscardActionsThisHand(int $gameId): int
     {
-        // Count discard_action events after the most recent trump_declared event
         $trumpEvent = $this->games->latestEventByType($gameId, 'trump_declared');
         if ($trumpEvent === null) {
             return 0;
@@ -641,29 +741,41 @@ final class GameRuntimeService
      */
     public function dealNewHand(int $gameId, int $handNumber, int $dealerSeat): int
     {
-        $seed = random_int(1, PHP_INT_MAX);
-        $deck = $this->buildShuffledDeck($seed);
+        $playerCount = $this->games->getPlayerCount($gameId);
+        $seed        = random_int(1, PHP_INT_MAX);
+        $deck        = $this->buildShuffledDeck($seed);
 
         // Deal 5 cards to each seat round-robin
-        $hands = [0 => [], 1 => [], 2 => [], 3 => []];
+        $hands = [];
+        for ($s = 0; $s < $playerCount; $s++) {
+            $hands[$s] = [];
+        }
         for ($round = 0; $round < 5; $round++) {
-            for ($s = 0; $s < 4; $s++) {
+            for ($s = 0; $s < $playerCount; $s++) {
                 $hands[$s][] = array_shift($deck);
             }
         }
 
-        // Remaining 3 cards are the kitty (top of remaining deck after deal)
-        $kitty = array_slice($deck, 0, 3);
+        // Next 3 cards form the kitty; whatever remains stays in the deck for draws
+        $kitty         = array_splice($deck, 0, 3);
+        $deckRemaining = array_values($deck);
 
         $handId = $this->games->createHand($gameId, $handNumber, $dealerSeat, $seed, $kitty);
-        for ($s = 0; $s < 4; $s++) {
+        for ($s = 0; $s < $playerCount; $s++) {
             $this->games->dealSeatCards($handId, $s, $hands[$s]);
         }
 
+        // Persist remaining deck so discard-phase draws and the 6-player dealer
+        // extra-draw step can pull from it.
+        if (!empty($deckRemaining)) {
+            $this->games->setDeckRemaining($handId, $deckRemaining);
+        }
+
         $this->games->appendEvent($gameId, 'hand_dealt', null, [
-            'hand_number' => $handNumber,
-            'dealer_seat' => $dealerSeat,
-            'at'          => gmdate('c'),
+            'hand_number'  => $handNumber,
+            'dealer_seat'  => $dealerSeat,
+            'player_count' => $playerCount,
+            'at'           => gmdate('c'),
         ]);
 
         return $handId;

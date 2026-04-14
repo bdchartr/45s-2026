@@ -254,7 +254,9 @@ final class GameRuntimeServiceTest extends TestCase
         ]);
         $repo->method('findCurrentHand')->willReturn([
             'id' => 1, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 0, 'dealer_extra_draw_pending' => 0,
         ]);
+        $repo->method('getPlayerCount')->willReturn(4);
         $repo->method('getSeatCards')->willReturn(['AC', 'KC', 'QC', 'JC', '10C']);
         $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
 
@@ -274,9 +276,11 @@ final class GameRuntimeServiceTest extends TestCase
         ]);
         $repo->method('findCurrentHand')->willReturn([
             'id' => 2, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 0, 'dealer_extra_draw_pending' => 0,
         ]);
         // Seat 1 has 5 non-trump cards; discarding 0 is valid (keep all 5)
         $repo->method('getSeatCards')->willReturn(['AC', 'KC', 'QC', 'JC', '10C']);
+        $repo->method('getPlayerCount')->willReturn(4);
         // Simulate 3 discard_action events already happened (seats 0,2,3), this is seat 1 → 4th
         $trumpEvent = ['seq_no' => 5, 'event_type' => 'trump_declared'];
         $repo->method('latestEventByType')->willReturn($trumpEvent);
@@ -287,7 +291,6 @@ final class GameRuntimeServiceTest extends TestCase
             ['event_type' => 'discard_action'],
         ]);
         // 4th discard → should trigger trick play start
-        // For trick start we need: bid_winner_seat = 0
         $repo->method('createTrick')->willReturn(1);
         $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
 
@@ -297,6 +300,211 @@ final class GameRuntimeServiceTest extends TestCase
         $this->assertTrue($result->accepted);
         // After 4th discard → trick_play
         $this->assertSame('trick_play', $result->statePatch['phase']);
+    }
+
+    public function testDiscardDrawsReplacementCardsFromDeck(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 43, 'current_turn_seat' => 1, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 0,
+        ]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 3, 'trump_suit' => 'S', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 0, 'dealer_extra_draw_pending' => 0,
+        ]);
+        // Seat 1 discards 2 cards; should draw 2 from deck
+        $repo->method('getSeatCards')->willReturn(['2C', '3C', '4C', '5D', '6D']);
+        $repo->method('getDeckRemaining')->willReturn(['7H', '8H', '9H', '10H', 'JD']);
+        $repo->method('getPlayerCount')->willReturn(4);
+        $trumpEvent = ['seq_no' => 5, 'event_type' => 'trump_declared'];
+        $repo->method('latestEventByType')->willReturn($trumpEvent);
+        // Only 1 prior discard; 2nd after this one leaves 2 remaining → stay in discard_phase
+        $repo->method('listEventsAfter')->willReturn([
+            ['event_type' => 'discard_action'],
+        ]);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        // Capture the cards saved back so we can assert the draws were added
+        $savedCards = null;
+        $repo->method('updateSeatCards')->willReturnCallback(
+            static function (int $handId, int $seat, array $cards) use (&$savedCards): void {
+                $savedCards = $cards;
+            }
+        );
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(43, 1, 'discard_cards', ['cards' => ['5D', '6D']]));
+
+        $this->assertTrue($result->accepted);
+        $this->assertNotNull($savedCards);
+        $this->assertCount(5, $savedCards);
+        // Kept 3 original cards + 2 drawn from deck
+        $this->assertContains('2C', $savedCards);
+        $this->assertContains('3C', $savedCards);
+        $this->assertContains('4C', $savedCards);
+        $this->assertContains('7H', $savedCards);
+        $this->assertContains('8H', $savedCards);
+    }
+
+    // =========================================================================
+    // 6-player discard rules
+    // =========================================================================
+
+    public function testSixPlayerDiscardRejectsTooManyCards(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 70, 'current_turn_seat' => 2, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 5,
+        ]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 10, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 5, 'dealer_extra_draw_pending' => 0,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(6);
+        $repo->method('getSeatCards')->willReturn(['2C', '3C', '4C', '5D', '6D']);
+        $repo->method('latestEventByType')->willReturn(null);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        // Attempting to discard 4 cards in a 6-player game
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(70, 2, 'discard_cards', ['cards' => ['2C', '3C', '4C', '5D']]));
+
+        $this->assertFalse($result->accepted);
+        $this->assertSame('too_many_discards', $result->code);
+    }
+
+    public function testSixPlayerDiscardAcceptsUpToThreeCards(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 71, 'current_turn_seat' => 2, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 5,
+        ]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 11, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 5, 'dealer_extra_draw_pending' => 0,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(6);
+        $repo->method('getSeatCards')->willReturn(['2C', '3C', '4C', '5D', '6D']);
+        $repo->method('getDeckRemaining')->willReturn(['7H', '8H', '9H', '10H', 'JD', 'QD', 'KD', 'AD']);
+        $repo->method('latestEventByType')->willReturn(null);
+        // Only 3 prior discards of 6; still more players to go
+        $repo->method('listEventsAfter')->willReturn([
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+        ]);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(71, 2, 'discard_cards', ['cards' => ['5D', '6D', '2C']]));
+
+        $this->assertTrue($result->accepted);
+        $this->assertSame('discard_phase', $result->statePatch['phase']);
+    }
+
+    public function testSixPlayerAfterAllDiscardsGivesDealerExtraCards(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 72, 'current_turn_seat' => 4, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 5,
+        ]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 12, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 5, 'dealer_extra_draw_pending' => 0,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(6);
+        // Seat 4 discards 0 — this is the 6th (final) discard
+        $repo->method('getSeatCards')->willReturnOnConsecutiveCalls(
+            ['2C', '3C', '4C', '5D', '6D'], // seat 4's hand
+            ['7H', '8H', '9H', '10H', 'JD']  // dealer's (seat 5) current hand
+        );
+        // 3 leftover cards in deck after all draws
+        $repo->method('getDeckRemaining')->willReturn(['AC', 'KC', 'QC']);
+        $trumpEvent = ['seq_no' => 5, 'event_type' => 'trump_declared'];
+        $repo->method('latestEventByType')->willReturn($trumpEvent);
+        // After seat 4's discard is appended, listEventsAfter returns 6 total
+        $repo->method('listEventsAfter')->willReturn([
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+            ['event_type' => 'discard_action'],
+        ]);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        // Capture the dealer's updated hand
+        $dealerCards = null;
+        $repo->method('updateSeatCards')->willReturnCallback(
+            static function (int $handId, int $seat, array $cards) use (&$dealerCards): void {
+                if ($seat === 5) {
+                    $dealerCards = $cards;
+                }
+            }
+        );
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(72, 4, 'discard_cards', ['cards' => []]));
+
+        $this->assertTrue($result->accepted);
+        // Phase stays discard_phase, turn advances to dealer (seat 5)
+        $this->assertSame('discard_phase', $result->statePatch['phase']);
+        $this->assertSame(5, $result->statePatch['current_turn_seat']);
+        // Dealer received the 3 extra deck cards merged into their hand (5 + 3 = 8)
+        $this->assertNotNull($dealerCards);
+        $this->assertCount(8, $dealerCards);
+    }
+
+    public function testSixPlayerDealerExtraDrawTransitionsToTrickPlay(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 73, 'current_turn_seat' => 5, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 5,
+        ]);
+        // dealer_extra_draw_pending = 1 signals it's the dealer's final discard step
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 13, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 5, 'dealer_extra_draw_pending' => 1,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(6);
+        // Dealer has 8 cards (5 original + 3 extra from deck); discards 3 to reach 5
+        $repo->method('getSeatCards')->willReturn(['7H', '8H', '9H', '10H', 'JD', 'AC', 'KC', 'QC']);
+        $repo->method('createTrick')->willReturn(1);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(73, 5, 'discard_cards', ['cards' => ['AC', 'KC', 'QC']]));
+
+        $this->assertTrue($result->accepted);
+        $this->assertSame('trick_play', $result->statePatch['phase']);
+    }
+
+    public function testSixPlayerDealerExtraDrawRejectsWrongSeat(): void
+    {
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 74, 'current_turn_seat' => 4, 'current_phase' => 'discard_phase',
+            'dealer_seat' => 5,
+        ]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 14, 'trump_suit' => 'H', 'bid_winner_seat' => 0, 'bid_value' => 20,
+            'dealer_seat' => 5, 'dealer_extra_draw_pending' => 1,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(6);
+        $repo->method('getSeatCards')->willReturn(['7H', '8H', '9H', '10H', 'JD', 'AC', 'KC', 'QC']);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        // Seat 4 tries to discard during dealer extra-draw — not allowed
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(74, 4, 'discard_cards', ['cards' => []]));
+
+        $this->assertFalse($result->accepted);
+        $this->assertSame('not_your_turn', $result->code);
     }
 
     // =========================================================================

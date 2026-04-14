@@ -487,7 +487,7 @@ final class Routes
                 }
                 $seat = (int) ($invite['seat'] ?? -1);
                 $inviteUserId = (int) ($invite['user_id'] ?? 0);
-                if ($seat < 1 || $seat > 3) {
+                if ($seat < 1 || $seat > 5) {
                     return $json($response, ['ok' => false, 'error' => 'invite seat must be in range 1..3'], 400);
                 }
                 if ($inviteUserId <= 0) {
@@ -755,7 +755,7 @@ final class Routes
             $body = (array) ($request->getParsedBody() ?? []);
             $gameId = (int) ($body['game_id'] ?? 0);
             $seat = (int) ($body['seat'] ?? -1);
-            if ($gameId <= 0 || $seat < 0 || $seat > 3) {
+            if ($gameId <= 0 || $seat < 0 || $seat > 5) {
                 return $json($response, ['ok' => false, 'error' => 'game_id and seat are required'], 400);
             }
 
@@ -784,7 +784,7 @@ final class Routes
             $gameId = (int) ($body['game_id'] ?? 0);
             $seat = (int) ($body['seat'] ?? -1);
             $card = (string) ($body['card'] ?? '');
-            if ($gameId <= 0 || $seat < 0 || $seat > 3 || $card === '') {
+            if ($gameId <= 0 || $seat < 0 || $seat > 5 || $card === '') {
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and card are required'], 400);
             }
 
@@ -813,7 +813,7 @@ final class Routes
             $gameId = (int) ($body['game_id'] ?? 0);
             $seat   = (int) ($body['seat'] ?? -1);
             $trump  = strtoupper(trim((string) ($body['trump'] ?? '')));
-            if ($gameId <= 0 || $seat < 0 || $seat > 3 || $trump === '') {
+            if ($gameId <= 0 || $seat < 0 || $seat > 5 || $trump === '') {
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and trump are required'], 400);
             }
 
@@ -842,7 +842,7 @@ final class Routes
             $gameId  = (int) ($body['game_id'] ?? 0);
             $seat    = (int) ($body['seat'] ?? -1);
             $cards   = $body['cards'] ?? [];
-            if ($gameId <= 0 || $seat < 0 || $seat > 3 || !is_array($cards)) {
+            if ($gameId <= 0 || $seat < 0 || $seat > 5 || !is_array($cards)) {
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and cards[] are required'], 400);
             }
 

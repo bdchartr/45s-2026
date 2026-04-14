@@ -647,6 +647,47 @@ class GameRepository
     }
 
     // -------------------------------------------------------------------------
+    // 6-player / deck-remaining helpers
+    // -------------------------------------------------------------------------
+
+    public function getPlayerCount(int $gameId): int
+    {
+        $sql = 'SELECT COUNT(*) FROM game_players WHERE game_id = :game_id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['game_id' => $gameId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function getDeckRemaining(int $handId): array
+    {
+        $sql = 'SELECT deck_remaining_json FROM hands WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['id' => $handId]);
+        $raw = $stmt->fetchColumn();
+        if (!is_string($raw) || $raw === '' || $raw === 'null') {
+            return [];
+        }
+        return json_decode($raw, true) ?? [];
+    }
+
+    public function setDeckRemaining(int $handId, array $cards): void
+    {
+        $sql = 'UPDATE hands SET deck_remaining_json = :json WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'json' => json_encode(array_values($cards), JSON_THROW_ON_ERROR),
+            'id'   => $handId,
+        ]);
+    }
+
+    public function setDealerExtraDrawPending(int $handId, bool $pending): void
+    {
+        $sql = 'UPDATE hands SET dealer_extra_draw_pending = :flag WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['flag' => $pending ? 1 : 0, 'id' => $handId]);
+    }
+
+    // -------------------------------------------------------------------------
     // Hand persistence
     // -------------------------------------------------------------------------
 
@@ -669,7 +710,8 @@ class GameRepository
     public function findCurrentHand(int $gameId): ?array
     {
         $sql = 'SELECT id, game_id, hand_number, dealer_seat, deck_seed, kitty_json,
-                       bid_winner_seat, bid_value, is_30_for_60, trump_suit, phase
+                       bid_winner_seat, bid_value, is_30_for_60, trump_suit, phase,
+                       dealer_extra_draw_pending
                 FROM hands
                 WHERE game_id = :game_id
                 ORDER BY hand_number DESC

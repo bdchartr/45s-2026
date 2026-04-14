@@ -1,6 +1,6 @@
 # Forty-Fives (45s) Implementation Details
 
-Last updated: 2026-04-13 (backend complete)
+Last updated: 2026-04-14 (6-player rules added)
 
 ## 1. Goals and Constraints
 
@@ -51,6 +51,16 @@ What is live now:
 - new API routes: `POST /api/game/declare_trump`, `POST /api/game/discard_cards`
 - event types: `trump_declared`, `discard_action`, `trick_play_started`, `hand_scored`, `hand_started`, `game_over`
 - unit tests for `CardRanker`, `LegalMoveValidator`, `TrickResolver`, and `GameRuntimeService`
+
+6-player variant rules (added 2026-04-14):
+- team layout: seats {0,2,4} vs {1,3,5}
+- per-player discard limit of 3 (replace at most 3 cards)
+- after all 6 players discard+draw, dealer receives all remaining undealt deck cards
+- dealer must then discard to 5 before trick play (`dealer_extra_draw_pending` flag in `hands`)
+- `deck_remaining_json` in `hands` tracks undealt cards through the discard phase (used for both 4- and 6-player draw step)
+- `player_count` in `games` distinguishes 4- vs 6-player games
+- deck draw now properly implemented: discarding N cards draws N replacements from `deck_remaining_json`
+- migration: `sql/migrate_add_6player.sql`
 
 What is still partial or needs frontend work:
 - the board still uses manual card-code text entry (not clickable cards)
@@ -307,7 +317,8 @@ All tables are now in active use:
 - `status` (`lobby`, `active`, `finished`, `abandoned`)
 - `target_score` (45 or 120)
 - `ruleset` (`chartrand` default)
-- `dealer_seat` (0-3)
+- `player_count` (4 or 6; default 4)
+- `dealer_seat` (0–3 or 0–5)
 - `current_phase`
 - `current_turn_seat`
 - `hand_number`
@@ -317,7 +328,7 @@ All tables are now in active use:
 ### game_players
 - `id` PK
 - `game_id` FK
-- `seat` (0-3)
+- `seat` (0–3 for 4-player; 0–5 for 6-player)
 - `user_id` nullable (AI if null and `is_ai=1`)
 - `is_ai` bool
 - `team` (0/1)
@@ -332,7 +343,10 @@ All tables are now in active use:
 - `bid_value` nullable
 - `is_30_for_60` bool
 - `trump_suit` nullable
-- `state_json` (deck order seed, discard/draw metadata)
+- `deck_seed` (random seed for shuffling)
+- `kitty_json` (3-card kitty)
+- `deck_remaining_json` (undealt cards remaining for draw step; updated as draws happen)
+- `dealer_extra_draw_pending` bool (6-player: set after all 6 discard, cleared after dealer's final discard)
 
 ### tricks
 - `id` PK

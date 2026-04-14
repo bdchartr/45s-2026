@@ -10,9 +10,18 @@ This document describes the house **Chartrand variant**, based on the **Newfound
 
 ## 1. Players and Partnerships
 
+### 1.1 Four-Player Game (Standard)
+
 - 4 players, seated in two teams of 2.
-- Partners sit across from each other (North/South vs East/West).
+- Partners sit across from each other (seats 0 & 2 vs seats 1 & 3).
 - The dealer rotates clockwise each hand.
+
+### 1.2 Six-Player Game (Chartrand Variant)
+
+- 6 players, seated in two teams of 3.
+- Players alternate teams around the table: seats {0, 2, 4} form one team; seats {1, 3, 5} form the other.
+- The dealer rotates clockwise each hand (seats 0 → 1 → 2 → 3 → 4 → 5 → 0 ...).
+- All other rules (card ranking, bidding, kitty, tricks, scoring) are identical to the four-player game unless a specific six-player exception is listed below.
 
 ---
 
@@ -110,12 +119,19 @@ Bidding proceeds clockwise starting from the player to the dealer's left. Each p
 After trump is declared:
 
 ### 5.1 Discarding
-- Each player may discard any number of cards from their hand (0 to 5), unless they picked up the kitty, in which case they must discard at least 3 cards (up to 8).
-- Players discard cards they don't want (without any order around the table)
-- Discards are placed face down in a discard pile and are not seen by other players, and play no further role in the hand.
+- **Four-player game:** Each player may discard any number of cards from their hand (0 to 5), unless they picked up the kitty, in which case they must discard at least 3 cards (up to 8, then drawn back to 5).
+- **Six-player game:** Each player may replace **at most 3 cards** (discard 0–3; must keep at least 2). The bid winner, who picks up the 3-card kitty, also replaces at most 3 cards (starts with 8, discards exactly 3 to reach 5).
+- Players discard cards they don't want (any order around the table).
+- Discards are placed face down and play no further role in the hand.
 
 ### 5.2 Replacements
-- When all players have finished their discards, players are given cards to bring their hand back to 5 cards from the remaining undealt cards by the dealer, in the same order around the table as the cards were dealt.
+- When all players have finished their discards, each player is dealt replacement cards from the remaining undealt deck to bring their hand back to 5 cards.
+
+### 5.3 Dealer's Extra Draw (Six-Player Only)
+- After all six players have completed their discard and been dealt back up to 5 cards, the **dealer** is given all remaining undealt cards from the deck.
+- The dealer may inspect these cards, add any or all of them to their hand, and must then discard down to exactly 5 cards.
+- There is no limit on how many cards the dealer may discard in this step.
+- This gives the dealer an informational and strategic advantage as compensation for dealing last.
 
 ---
 
@@ -218,11 +234,17 @@ These rules together define the Newfoundland variant:
 
 ### 11.1 Player Configurations
 The game must support:
+
+**Four-player (standard):**
 - **1 human + 3 AI** -- solo play with AI teammates and opponents
 - **2 humans + 2 AI** -- two humans as partners with AI opponents, or two humans on opposite teams each with an AI partner (online multiplayer)
 - **3 humans + 1 AI** -- three humans with one AI filling the fourth seat (online multiplayer)
 - **4 humans** -- full human game (online multiplayer)
 - **4 AI** -- simulation/debug mode for validating game logic and AI
+
+**Six-player (Chartrand variant):**
+- Any mix of 6 human + AI seats across the two three-player teams
+- **6 AI** -- simulation/debug mode
 
 ### 11.2 Authentication
 - Simple username/password registration and login
