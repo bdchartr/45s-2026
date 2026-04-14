@@ -646,6 +646,277 @@ final class GameRepository
         return $stmt->fetchAll();
     }
 
+    // -------------------------------------------------------------------------
+    // Hand persistence
+    // -------------------------------------------------------------------------
+
+    public function createHand(int $gameId, int $handNumber, int $dealerSeat, int $deckSeed, array $kitty): int
+    {
+        $sql = 'INSERT INTO hands (game_id, hand_number, dealer_seat, deck_seed, kitty_json, phase)
+                VALUES (:game_id, :hand_number, :dealer_seat, :deck_seed, :kitty_json, :phase)';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'game_id'     => $gameId,
+            'hand_number' => $handNumber,
+            'dealer_seat' => $dealerSeat,
+            'deck_seed'   => $deckSeed,
+            'kitty_json'  => json_encode($kitty, JSON_THROW_ON_ERROR),
+            'phase'       => 'bidding',
+        ]);
+        return (int) $this->db->pdo()->lastInsertId();
+    }
+
+    public function findCurrentHand(int $gameId): ?array
+    {
+        $sql = 'SELECT id, game_id, hand_number, dealer_seat, deck_seed, kitty_json,
+                       bid_winner_seat, bid_value, is_30_for_60, trump_suit, phase
+                FROM hands
+                WHERE game_id = :game_id
+                ORDER BY hand_number DESC
+                LIMIT 1';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['game_id' => $gameId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        $row['kitty'] = json_decode((string) $row['kitty_json'], true) ?? [];
+        return $row;
+    }
+
+    public function setHandBid(int $handId, int $winnerSeat, int $bidValue, bool $is30For60): void
+    {
+        $sql = 'UPDATE hands SET bid_winner_seat = :seat, bid_value = :bid, is_30_for_60 = :flag WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'seat' => $winnerSeat,
+            'bid'  => $bidValue,
+            'flag' => $is30For60 ? 1 : 0,
+            'id'   => $handId,
+        ]);
+    }
+
+    public function setHandTrump(int $handId, string $trumpSuit): void
+    {
+        $sql = 'UPDATE hands SET trump_suit = :trump, phase = :phase WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['trump' => $trumpSuit, 'phase' => 'discard_phase', 'id' => $handId]);
+    }
+
+    public function setHandPhase(int $handId, string $phase): void
+    {
+        $sql = 'UPDATE hands SET phase = :phase WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['phase' => $phase, 'id' => $handId]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Hand cards
+    // -------------------------------------------------------------------------
+
+    public function dealSeatCards(int $handId, int $seat, array $cards): void
+    {
+        $sql = 'INSERT INTO hand_cards (hand_id, seat, cards_json)
+                VALUES (:hand_id, :seat, :cards_json)
+                ON DUPLICATE KEY UPDATE cards_json = VALUES(cards_json)';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'hand_id'    => $handId,
+            'seat'       => $seat,
+            'cards_json' => json_encode($cards, JSON_THROW_ON_ERROR),
+        ]);
+    }
+
+    public function getSeatCards(int $handId, int $seat): ?array
+    {
+        $sql = 'SELECT cards_json FROM hand_cards WHERE hand_id = :hand_id AND seat = :seat';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['hand_id' => $handId, 'seat' => $seat]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        return json_decode((string) $row['cards_json'], true) ?? [];
+    }
+
+    public function updateSeatCards(int $handId, int $seat, array $cards): void
+    {
+        $sql = 'UPDATE hand_cards SET cards_json = :cards_json WHERE hand_id = :hand_id AND seat = :seat';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'cards_json' => json_encode($cards, JSON_THROW_ON_ERROR),
+            'hand_id'    => $handId,
+            'seat'       => $seat,
+        ]);
+    }
+
+    /** Returns [seat => cards[]] for all four seats */
+    public function getAllSeatCards(int $handId): array
+    {
+        $sql = 'SELECT seat, cards_json FROM hand_cards WHERE hand_id = :hand_id ORDER BY seat ASC';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['hand_id' => $handId]);
+        $result = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $result[(int) $row['seat']] = json_decode((string) $row['cards_json'], true) ?? [];
+        }
+        return $result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Tricks
+    // -------------------------------------------------------------------------
+
+    public function createTrick(int $handId, int $trickNumber, int $leadSeat): int
+    {
+        $sql = 'INSERT INTO tricks (hand_id, trick_number, lead_seat, cards_json)
+                VALUES (:hand_id, :trick_number, :lead_seat, :cards_json)';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'hand_id'      => $handId,
+            'trick_number' => $trickNumber,
+            'lead_seat'    => $leadSeat,
+            'cards_json'   => json_encode([], JSON_THROW_ON_ERROR),
+        ]);
+        return (int) $this->db->pdo()->lastInsertId();
+    }
+
+    public function findCurrentTrick(int $handId): ?array
+    {
+        $sql = 'SELECT id, trick_number, lead_seat, winner_seat, cards_json, best_trump_played
+                FROM tricks
+                WHERE hand_id = :hand_id
+                ORDER BY trick_number DESC
+                LIMIT 1';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['hand_id' => $handId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        $row['cards'] = json_decode((string) $row['cards_json'], true) ?? [];
+        return $row;
+    }
+
+    public function addCardToTrick(int $trickId, int $seat, string $cardCode): void
+    {
+        // Fetch current plays, append, write back
+        $sql = 'SELECT cards_json FROM tricks WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['id' => $trickId]);
+        $row = $stmt->fetch();
+        $cards = $row ? (json_decode((string) $row['cards_json'], true) ?? []) : [];
+        $cards[] = ['seat' => $seat, 'card' => $cardCode];
+
+        $sql2 = 'UPDATE tricks SET cards_json = :cards_json WHERE id = :id';
+        $stmt2 = $this->db->pdo()->prepare($sql2);
+        $stmt2->execute([
+            'cards_json' => json_encode($cards, JSON_THROW_ON_ERROR),
+            'id'         => $trickId,
+        ]);
+    }
+
+    public function closeTrick(int $trickId, int $winnerSeat, ?string $bestTrumpPlayed): void
+    {
+        $sql = 'UPDATE tricks SET winner_seat = :winner, best_trump_played = :best_trump WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['winner' => $winnerSeat, 'best_trump' => $bestTrumpPlayed, 'id' => $trickId]);
+    }
+
+    public function countCompletedTricks(int $handId): int
+    {
+        $sql = 'SELECT COUNT(*) FROM tricks WHERE hand_id = :hand_id AND winner_seat IS NOT NULL';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['hand_id' => $handId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function listTricks(int $handId): array
+    {
+        $sql = 'SELECT id, trick_number, lead_seat, winner_seat, cards_json, best_trump_played
+                FROM tricks WHERE hand_id = :hand_id ORDER BY trick_number ASC';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['hand_id' => $handId]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['cards'] = json_decode((string) $row['cards_json'], true) ?? [];
+        }
+        return $rows;
+    }
+
+    // -------------------------------------------------------------------------
+    // Scores
+    // -------------------------------------------------------------------------
+
+    public function getRunningScores(int $gameId): array
+    {
+        $sql = 'SELECT team0_total, team1_total, team0_sets, team1_sets
+                FROM scores
+                WHERE game_id = :game_id
+                ORDER BY id DESC
+                LIMIT 1';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['game_id' => $gameId]);
+        $row = $stmt->fetch();
+        return $row ?: ['team0_total' => 0, 'team1_total' => 0, 'team0_sets' => 0, 'team1_sets' => 0];
+    }
+
+    public function insertScore(
+        int $gameId,
+        int $handId,
+        int $team0Delta,
+        int $team1Delta,
+        int $team0Total,
+        int $team1Total,
+        int $team0Sets,
+        int $team1Sets
+    ): void {
+        $sql = 'INSERT INTO scores
+                    (game_id, hand_id, team0_delta, team1_delta, team0_total, team1_total, team0_sets, team1_sets)
+                VALUES
+                    (:game_id, :hand_id, :t0d, :t1d, :t0t, :t1t, :t0s, :t1s)
+                ON DUPLICATE KEY UPDATE
+                    team0_delta  = VALUES(team0_delta),
+                    team1_delta  = VALUES(team1_delta),
+                    team0_total  = VALUES(team0_total),
+                    team1_total  = VALUES(team1_total),
+                    team0_sets   = VALUES(team0_sets),
+                    team1_sets   = VALUES(team1_sets)';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'game_id' => $gameId,
+            'hand_id' => $handId,
+            't0d'     => $team0Delta,
+            't1d'     => $team1Delta,
+            't0t'     => $team0Total,
+            't1t'     => $team1Total,
+            't0s'     => $team0Sets,
+            't1s'     => $team1Sets,
+        ]);
+    }
+
+    public function setGameStatus(int $gameId, string $status): void
+    {
+        $sql = 'UPDATE games SET status = :status WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['status' => $status, 'id' => $gameId]);
+    }
+
+    public function advanceHand(int $gameId, int $newHandNumber, int $newDealerSeat): void
+    {
+        $sql = 'UPDATE games SET hand_number = :hand_number, dealer_seat = :dealer_seat WHERE id = :id';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'hand_number' => $newHandNumber,
+            'dealer_seat' => $newDealerSeat,
+            'id'          => $gameId,
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
     private function nextEventSeq(int $gameId): int
     {
         $sql = 'SELECT COALESCE(MAX(seq_no), 0) + 1 AS next_seq FROM game_events WHERE game_id = :game_id';

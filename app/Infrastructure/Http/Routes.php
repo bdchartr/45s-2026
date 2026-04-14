@@ -557,6 +557,10 @@ final class Routes
                         'at' => gmdate('c'),
                     ]);
 
+                    // Deal hand 1 immediately so authoritative card state exists from the start
+                    $runtime = new GameRuntimeService($repo);
+                    $runtime->dealNewHand($gameId, 1, 0);
+
                     return $gameId;
                 });
             } catch (\Throwable $ex) {
@@ -795,6 +799,64 @@ final class Routes
                 'ok' => $result->accepted,
                 'code' => $result->code,
                 'message' => $result->message,
+                'state_patch' => $result->statePatch,
+            ], $status);
+        });
+
+        $app->post('/api/game/declare_trump', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $body   = (array) ($request->getParsedBody() ?? []);
+            $gameId = (int) ($body['game_id'] ?? 0);
+            $seat   = (int) ($body['seat'] ?? -1);
+            $trump  = strtoupper(trim((string) ($body['trump'] ?? '')));
+            if ($gameId <= 0 || $seat < 0 || $seat > 3 || $trump === '') {
+                return $json($response, ['ok' => false, 'error' => 'game_id, seat, and trump are required'], 400);
+            }
+
+            $repo    = new GameRepository(Database::fromConfig());
+            $runtime = new GameRuntimeService($repo);
+            $result  = $runtime->handle(new ActionCommand($gameId, $seat, 'declare_trump', [
+                'trump' => $trump,
+            ]));
+
+            $status = $result->accepted ? 200 : 409;
+            return $json($response, [
+                'ok'          => $result->accepted,
+                'code'        => $result->code,
+                'message'     => $result->message,
+                'state_patch' => $result->statePatch,
+            ], $status);
+        });
+
+        $app->post('/api/game/discard_cards', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $body    = (array) ($request->getParsedBody() ?? []);
+            $gameId  = (int) ($body['game_id'] ?? 0);
+            $seat    = (int) ($body['seat'] ?? -1);
+            $cards   = $body['cards'] ?? [];
+            if ($gameId <= 0 || $seat < 0 || $seat > 3 || !is_array($cards)) {
+                return $json($response, ['ok' => false, 'error' => 'game_id, seat, and cards[] are required'], 400);
+            }
+
+            $repo    = new GameRepository(Database::fromConfig());
+            $runtime = new GameRuntimeService($repo);
+            $result  = $runtime->handle(new ActionCommand($gameId, $seat, 'discard_cards', [
+                'cards' => $cards,
+            ]));
+
+            $status = $result->accepted ? 200 : 409;
+            return $json($response, [
+                'ok'          => $result->accepted,
+                'code'        => $result->code,
+                'message'     => $result->message,
                 'state_patch' => $result->statePatch,
             ], $status);
         });

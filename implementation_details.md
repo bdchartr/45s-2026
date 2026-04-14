@@ -1,6 +1,6 @@
 # Forty-Fives (45s) Implementation Details
 
-Last updated: 2026-04-13
+Last updated: 2026-04-13 (backend complete)
 
 ## 1. Goals and Constraints
 
@@ -33,29 +33,38 @@ What is live now:
 - local register/login/logout and session-backed auth state
 - owner/admin-protected stats and admin APIs
 - lobby UI with session-aware signed-in/signed-out states
-- create game with AI seats
+- create game with AI seats (deals hand 1 immediately on game creation)
 - open-invite and seat-specific invite modes
 - multi-game support via `my_games` and `list_joinable`
 - game board with fixed viewer perspective (south = current user)
 - dealer marker, turn marker, center trick area, and won-trick side stacks
-- explicit lifecycle events for:
-  - `bidding_closed`
-  - `kitty_picked_up`
-  - `discard_completed`
-  - `restock_completed`
-  - `trick_won`
-- `get_state` currently returns `viewer_seat` and `viewer_hand`
+- full phase lifecycle: `bidding → declare_trump → discard_phase → trick_play → score_hand → game_over`
+- authoritative hand state persisted to `hands` / `hand_cards` tables (no more deterministic reconstruction)
+- trump declaration stored in `hands.trump_suit`
+- discard + replacement draw as real DB-backed actions
+- full 45s card ranking (all suit variants, black/red number ordering, top-trump hierarchy)
+- full 45s legal move validation (follow-suit, trump exemption, top-trump no-force-out rule)
+- trick resolution using authoritative `CardRanker` + `TrickResolver`
+- trick persistence in `tricks` table
+- hand scoring with best-trump bonus (+5), set tracking, bid-out, three-sets loss, game-over
+- scores persisted to `scores` table with running totals per hand
+- new API routes: `POST /api/game/declare_trump`, `POST /api/game/discard_cards`
+- event types: `trump_declared`, `discard_action`, `trick_play_started`, `hand_scored`, `hand_started`, `game_over`
+- unit tests for `CardRanker`, `LegalMoveValidator`, `TrickResolver`, and `GameRuntimeService`
 
-What is still partial or inferred:
-- `viewer_hand` is currently reconstructed deterministically from `game_id` plus `card_played` history rather than from persisted hand records
-- the board still uses manual card-code entry for play actions
-- the hand flow tracker is partially event-driven and partially phase-derived
+What is still partial or needs frontend work:
+- the board still uses manual card-code text entry (not clickable cards)
+- contract/trump/trick info not yet displayed on board
+- player labels still use seat IDs rather than usernames
+- `get_state` returns `viewer_hand` from `hand_cards` table but frontend rendering of it is unchanged
+- AI seats call no AI engine yet (AI seats stall on their turn)
 
-What is not fully authoritative yet:
-- trump declaration
-- true discard/draw actions backed by persisted card state
-- full 45s move legality based on authoritative hand contents
-- hand scoring, sets, bid-out, and game-over resolution
+What remains as future work:
+- clickable card UI (frontend)
+- AI engine integration (AlgorithmicMoveProvider wired into GameRuntimeService for AI turns)
+- Google OAuth completion and testing
+- incremental event polling (frontend)
+- PWA manifest / service worker / offline shell
 
 ## 2.1 Module Boundaries (Refined)
 
@@ -267,21 +276,23 @@ Game phases:
 7. `score_hand`
 8. `game_over`
 
-Current live phase usage is narrower than the target model. The phases actively exercised today are primarily:
-- `bidding`
-- `trick_play`
+All phases are now implemented and exercised:
+- `bidding` → `declare_trump` → `discard_phase` → `trick_play` → `score_hand` → `game_over`
+- next hand cycles back to `bidding` with incremented hand number and rotated dealer
 
 ## 6. Database Schema (Initial)
 
 Current live schema is simpler than the original target model.
 
-Tables currently in active production use:
+All tables are now in active use:
 - `users`
 - `games`
 - `game_players`
 - `game_events`
-
-Target tables such as `hands`, `tricks`, and `scores` are still design targets and not the current live implementation.
+- `hands` — deck seed, kitty, bid info, trump, phase per hand
+- `hand_cards` — authoritative per-seat card assignments (mutated by discard/draw/play)
+- `tricks` — per-trick play log and winner
+- `scores` — per-hand deltas and running totals with set counts
 
 ### users
 - `id` PK
@@ -373,6 +384,8 @@ Current live gameplay routes:
 - `GET /45s/api/game/get_state?game_id=...`
 - `GET /45s/api/game/poll_events?game_id=...&after_seq=...`
 - `POST /45s/api/game/submit_bid`
+- `POST /45s/api/game/declare_trump`
+- `POST /45s/api/game/discard_cards`
 - `POST /45s/api/game/play_card`
 
 Current live admin/system routes:
@@ -522,20 +535,28 @@ Current practical post-deploy checks:
 
 ## 14. Next Steps
 
-Highest priority backend work:
-- replace inferred `viewer_hand` with authoritative persisted hand/deck/kitty state
-- implement explicit trump declaration and storage
-- implement discard and replacement draw as true actions with authoritative card state updates
-- add hand scoring, set tracking, bid-out, and game-over processing
-- add stronger `get_state` and event-payload regression tests
+Backend (completed 2026-04-13):
+- ✅ authoritative hand/deck/kitty state persisted to `hands` + `hand_cards`
+- ✅ trump declaration stored and gated by `declare_trump` phase
+- ✅ discard + draw backed by `hand_cards` mutations
+- ✅ full hand scoring: trick points, best-trump bonus, sets, bid-out, game-over
+- ✅ full 45s `CardRanker` (all suit variants, black/red number ordering)
+- ✅ full 45s `LegalMoveValidator` (follow-suit, trump exemption, top-trump no-force-out)
+- ✅ `declare_trump` and `discard_cards` API routes
+- ✅ unit tests for all domain rules and GameRuntimeService phase flow
+- ✅ schema migrations for `hands`, `hand_cards`, `tricks`, `scores`
 
 Highest priority frontend work:
-- replace manual card-code entry with clickable cards from the rendered hand
-- show current contract, trump suit, trick number, and team trick totals directly on the board
-- replace generic player id labels with usernames when available
-- improve polling to use incremental event refresh where possible
+- replace manual card-code text entry with clickable cards from the rendered `viewer_hand`
+- display current contract, trump suit, trick number, and team scores on the board
+- replace seat-ID player labels with usernames
+- consume new events (`trump_declared`, `discard_action`, `hand_scored`, `game_over`) in the board renderer
 
-Operational next steps:
-- normalize or clean malformed legacy event rows if any remain in production
-- document the current deployment flow and session behavior in one short operator runbook
-- add a narrow smoke script for `login -> open board -> get_state -> submit action`
+AI integration:
+- wire `AlgorithmicMoveProvider` into `GameRuntimeService` so AI seats auto-play their turns
+- AI must handle all four action types: `submit_bid`, `declare_trump`, `discard_cards`, `play_card`
+
+Operational:
+- run `sql/schema.sql` migrations on production to add the four new tables
+- add a narrow smoke script: `login → create_game → bid all → declare_trump → discard → play 5 tricks → verify score`
+- verify no malformed legacy event rows block the new phase gating
