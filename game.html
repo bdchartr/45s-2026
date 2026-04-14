@@ -187,12 +187,66 @@
       min-width: 38px;
       text-align: center;
       box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+      user-select: none;
     }
 
     .card-chip.back {
       background: linear-gradient(135deg, #f9f3ea, #eadcc7);
       color: #6d6557;
     }
+
+    .card-chip.red  { color: #b91c1c; }
+    .card-chip.trump {
+      border-color: #c7900a;
+      background: #fffbeb;
+      box-shadow: 0 0 0 2px rgba(199,144,10,0.25), 0 2px 4px rgba(0,0,0,0.08);
+    }
+    .card-chip.trump.red { color: #b91c1c; }
+
+    .card-chip.playable {
+      cursor: pointer;
+      transition: transform 80ms, box-shadow 80ms;
+    }
+    .card-chip.playable:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.18);
+    }
+
+    .card-chip.selected {
+      border-color: #1d6fa4;
+      background: #e8f4fd;
+      transform: translateY(-6px);
+      box-shadow: 0 6px 14px rgba(29,111,164,0.3);
+    }
+    .card-chip.selected.red { color: #b91c1c; }
+
+    .info-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      font-size: 13px;
+    }
+
+    .info-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--chip);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-weight: 600;
+    }
+
+    .info-pill .label { color: var(--muted); font-weight: 400; margin-right: 2px; }
+    .info-pill.trump-pill { border-color: #c7900a; background: #fffbeb; }
+    .info-pill.set-warn  { border-color: var(--bad); background: #fdf2f2; color: var(--bad); }
 
     .center {
       position: absolute;
@@ -395,6 +449,7 @@
       .stack { width: 62px; }
       .stack-count { width: 24px; height: 36px; }
       .flow-row { grid-template-columns: 1fr; gap: 2px; }
+      .info-bar { gap: 6px; padding: 6px 10px; }
     }
   </style>
 </head>
@@ -412,6 +467,8 @@
         <a href="/45s/lobby.html">Back to Lobby</a>
       </div>
     </header>
+
+    <div class="info-bar" id="infoBar"></div>
 
     <section class="board" id="board">
       <div class="felt-pattern"></div>
@@ -446,13 +503,25 @@
           <button data-bid="60">60</button>
         </div>
 
-        <div class="action-row" id="playRow">
-          <input id="cardInput" placeholder="Card code, example: AH" maxlength="4">
-          <button id="playBtn" class="warn">Play Card</button>
+        <div class="action-row" id="trumpRow" style="display:none">
+          <span style="font-size:13px;color:var(--muted);margin-right:4px">Declare trump:</span>
+          <button data-trump="C" style="background:#2e3a47">♣ Clubs</button>
+          <button data-trump="D" style="background:#b91c1c">♦ Diamonds</button>
+          <button data-trump="H" style="background:#b91c1c">♥ Hearts</button>
+          <button data-trump="S" style="background:#2e3a47">♠ Spades</button>
+        </div>
+
+        <div class="action-row" id="discardRow" style="display:none">
+          <span id="discardHint" style="font-size:13px;color:var(--muted)">Click cards in your hand to select discards</span>
+          <button id="discardBtn">Confirm Discard</button>
+        </div>
+
+        <div class="action-row" id="playRow" style="display:none">
+          <span style="font-size:13px;color:var(--muted)">Click a card in your hand to play it</span>
         </div>
 
         <div id="actionStatus" class="status"></div>
-        <div class="line muted" id="actionHint">Cards and trick winners are event-driven. Winner-side stack uses explicit winner events when available.</div>
+        <div class="line muted" id="actionHint"></div>
 
         <h3 class="mt-10">Hand Flow</h3>
         <div class="flow" id="handFlow"></div>
@@ -473,12 +542,118 @@
       me: null,
       csrf: '',
       state: null,
+      hand: null,      // current hand info: trump_suit, bid_winner_seat, bid_value
+      scores: null,    // team0_total, team1_total, team0_sets, team1_sets
       players: [],
       events: [],
       viewerSeat: null,
       viewerHand: [],
+      selectedDiscards: [],  // card codes selected for discard
       pollingId: null,
     };
+
+    const SUIT_SYM  = { C: '♣', D: '♦', H: '♥', S: '♠' };
+    const SUIT_NAME = { C: 'Clubs', D: 'Diamonds', H: 'Hearts', S: 'Spades' };
+
+    // -------------------------------------------------------------------------
+    // Card helpers
+    // -------------------------------------------------------------------------
+
+    function suitOf(code) {
+      return code ? String(code).slice(-1).toUpperCase() : '';
+    }
+
+    function rankOf(code) {
+      return code ? String(code).slice(0, -1) : '';
+    }
+
+    function isRedSuit(s) { return s === 'H' || s === 'D'; }
+
+    function isTrumpCard(code, trump) {
+      if (!trump || !code) return false;
+      const s = suitOf(code);
+      return s === trump || code === 'AH';
+    }
+
+    /** Build the display label for a card: rank + suit symbol */
+    function cardLabel(code) {
+      const s = suitOf(code);
+      return rankOf(code) + (SUIT_SYM[s] || s);
+    }
+
+    /** CSS classes for a card chip (not including 'card-chip' itself) */
+    function cardClasses(code, trump, extra) {
+      const s = suitOf(code);
+      const classes = [];
+      if (isTrumpCard(code, trump)) classes.push('trump');
+      if (isRedSuit(s)) classes.push('red');
+      if (extra) classes.push(...extra);
+      return classes.join(' ');
+    }
+
+    // -------------------------------------------------------------------------
+    // Info bar
+    // -------------------------------------------------------------------------
+
+    function renderInfoBar() {
+      const bar = byId('infoBar');
+      const g = app.state || {};
+      const h = app.hand || {};
+      const sc = app.scores || {};
+      const phase = String(g.current_phase || '');
+
+      const pills = [];
+
+      // Trump
+      const trump = h.trump_suit || null;
+      if (trump) {
+        const sym = SUIT_SYM[trump] || trump;
+        const red = isRedSuit(trump) ? 'color:#b91c1c' : 'color:#1a1f25';
+        pills.push('<div class="info-pill trump-pill">' +
+          '<span class="label">Trump</span>' +
+          '<span style="font-size:16px;' + red + '">' + sym + '</span> ' +
+          SUIT_NAME[trump] + '</div>');
+      } else if (phase === 'bidding' || phase === 'declare_trump') {
+        pills.push('<div class="info-pill"><span class="label">Trump</span>TBD</div>');
+      }
+
+      // Contract
+      const bidWinner = h.bid_winner_seat != null ? Number(h.bid_winner_seat) : null;
+      const bidValue  = h.bid_value != null ? Number(h.bid_value) : null;
+      if (bidWinner !== null && bidValue !== null) {
+        const label = bidValue === 60 ? '30-for-60' : String(bidValue);
+        pills.push('<div class="info-pill"><span class="label">Contract</span>Seat ' + bidWinner + ' — ' + label + '</div>');
+      }
+
+      // Scores
+      const t0 = Number(sc.team0_total ?? 0);
+      const t1 = Number(sc.team1_total ?? 0);
+      const s0 = Number(sc.team0_sets  ?? 0);
+      const s1 = Number(sc.team1_sets  ?? 0);
+      const target = Number(g.target_score || 120);
+
+      const t0cls = s0 >= 2 ? ' set-warn' : '';
+      const t1cls = s1 >= 2 ? ' set-warn' : '';
+      pills.push('<div class="info-pill' + t0cls + '"><span class="label">Team 0 (0,2)</span>' +
+        t0 + '/' + target + (s0 > 0 ? ' · ' + s0 + ' set' + (s0 > 1 ? 's' : '') : '') + '</div>');
+      pills.push('<div class="info-pill' + t1cls + '"><span class="label">Team 1 (1,3)</span>' +
+        t1 + '/' + target + (s1 > 0 ? ' · ' + s1 + ' set' + (s1 > 1 ? 's' : '') : '') + '</div>');
+
+      // Hand / trick progress
+      const hand = Number(g.hand_number || 1);
+      const cardPlays = app.events.filter(function (e) { return e.event_type === 'card_played'; }).length;
+      const completedTricks = Math.floor(cardPlays / 4);
+      if (phase === 'trick_play') {
+        pills.push('<div class="info-pill"><span class="label">Hand</span>' + hand +
+          ' · Trick ' + (completedTricks + 1) + '/5</div>');
+      } else {
+        pills.push('<div class="info-pill"><span class="label">Hand</span>' + hand + '</div>');
+      }
+
+      bar.innerHTML = pills.join('');
+    }
+
+    // -------------------------------------------------------------------------
 
     function byId(id) { return document.getElementById(id); }
 
@@ -563,39 +738,70 @@
       const seat = seatForSide(side);
       const p = playerBySeat(seat);
       const zone = byId('zone-' + side);
-      const isDealer = seat !== null && app.state && Number(app.state.dealer_seat) === Number(seat);
-      const isTurn = seat !== null && app.state && Number(app.state.current_turn_seat) === Number(seat);
+      const g = app.state || {};
+      const phase = String(g.current_phase || '');
+      const trump = app.hand ? app.hand.trump_suit : null;
+      const isDealer = seat !== null && Number(g.dealer_seat) === Number(seat);
+      const isTurn   = seat !== null && Number(g.current_turn_seat) === Number(seat);
       const isViewer = seat !== null && Number(seat) === Number(app.viewerSeat);
-      const cardBacks = isViewer ? 5 : 5;
+
+      // Discard phase: viewer can always submit (turn order bypassed server-side)
+      const canDiscard  = isViewer && phase === 'discard_phase';
+      const canPlay     = isViewer && phase === 'trick_play' && isTurn;
 
       zone.className = 'player-zone zone-' + side + (isDealer ? ' dealer' : '') + (isTurn ? ' turn' : '');
 
       const statusBits = [];
       if (p) {
         statusBits.push('team ' + p.team);
-        statusBits.push(Number(p.connected) === 1 ? 'connected' : 'disconnected');
         if (Number(p.is_ai) === 1) statusBits.push('AI');
+        if (Number(p.connected) !== 1) statusBits.push('disconnected');
       }
 
       let handHtml = '';
       if (isViewer) {
         if (Array.isArray(app.viewerHand) && app.viewerHand.length > 0) {
           for (let i = 0; i < app.viewerHand.length; i++) {
-            handHtml += '<div class="card-chip">' + app.viewerHand[i] + '</div>';
+            const code = app.viewerHand[i];
+            const isSelected = app.selectedDiscards.indexOf(code) !== -1;
+            const extra = [];
+            if (canDiscard || canPlay) extra.push('playable');
+            if (isSelected) extra.push('selected');
+            const cls = 'card-chip ' + cardClasses(code, trump, extra);
+            const label = trump ? cardLabel(code) : code; // show symbols only once trump known
+            handHtml += '<div class="' + cls.trim() + '" data-card="' + code + '">' + label + '</div>';
           }
         } else {
-          handHtml = '<div class="card-chip back">no cards visible</div>';
+          handHtml = '<div class="card-chip back">—</div>';
         }
       } else {
-        for (let i = 0; i < cardBacks; i++) {
+        const count = Array.isArray(app.viewerHand) && isViewer ? app.viewerHand.length : 5;
+        for (let i = 0; i < 5; i++) {
           handHtml += '<div class="card-chip back">##</div>';
         }
       }
 
       zone.innerHTML =
-        '<div class="player-name">' + side.toUpperCase() + ' - ' + displayNameForPlayer(p) + '</div>' +
-        '<div class="player-meta">' + seatName(seat) + (statusBits.length ? ' | ' + statusBits.join(' | ') : '') + '</div>' +
-        '<div class="hand">' + handHtml + '</div>';
+        '<div class="player-name">' + displayNameForPlayer(p) + ' <span style="font-weight:400;color:var(--muted);font-size:12px">Seat ' + seat + '</span></div>' +
+        '<div class="player-meta">' + (statusBits.length ? statusBits.join(' · ') : '&nbsp;') + '</div>' +
+        '<div class="hand" id="hand-' + side + '">' + handHtml + '</div>';
+
+      // Attach card click listeners for the viewer's zone
+      if (isViewer) {
+        const handEl = byId('hand-' + side);
+        if (handEl) {
+          handEl.addEventListener('click', function (ev) {
+            const chip = ev.target.closest('[data-card]');
+            if (!chip) return;
+            const code = chip.dataset.card;
+            if (canPlay) {
+              playCard(code);
+            } else if (canDiscard) {
+              toggleDiscard(code);
+            }
+          });
+        }
+      }
     }
 
     function deriveTableAndStacks() {
@@ -842,18 +1048,38 @@
       const g = app.state || {};
       const seated = Number.isInteger(app.viewerSeat);
       const myTurn = seated && Number(g.current_turn_seat) === Number(app.viewerSeat);
-      const phase = String(g.current_phase || '');
+      const phase  = String(g.current_phase || '');
 
-      const bidRow = byId('bidRow');
-      const playRow = byId('playRow');
+      const bidRow     = byId('bidRow');
+      const trumpRow   = byId('trumpRow');
+      const discardRow = byId('discardRow');
+      const playRow    = byId('playRow');
 
-      bidRow.style.display = phase === 'bidding' ? 'flex' : 'none';
-      playRow.style.display = phase === 'trick_play' ? 'flex' : 'none';
+      bidRow.style.display     = phase === 'bidding'       ? 'flex' : 'none';
+      trumpRow.style.display   = phase === 'declare_trump' ? 'flex' : 'none';
+      discardRow.style.display = phase === 'discard_phase' ? 'flex' : 'none';
+      playRow.style.display    = phase === 'trick_play'    ? 'flex' : 'none';
 
+      // Bid buttons — only active on your turn
       Array.from(bidRow.querySelectorAll('button')).forEach(function (btn) {
         btn.disabled = !(seated && myTurn);
       });
-      byId('playBtn').disabled = !(seated && myTurn && phase === 'trick_play');
+
+      // Trump buttons — only bid winner on their turn
+      Array.from(trumpRow.querySelectorAll('button')).forEach(function (btn) {
+        btn.disabled = !(seated && myTurn);
+      });
+
+      // Discard — viewer can always submit during discard_phase
+      const nSel = app.selectedDiscards.length;
+      const discardHint = byId('discardHint');
+      if (discardHint) {
+        discardHint.textContent = nSel === 0
+          ? 'Click cards to select discards (or confirm to keep all 5)'
+          : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — confirm to discard';
+      }
+      const discardBtn = byId('discardBtn');
+      if (discardBtn) discardBtn.disabled = !seated;
     }
 
     function renderBoard() {
@@ -862,6 +1088,7 @@
       renderHandFlow();
       renderMeta();
       renderControls();
+      renderInfoBar();
       renderLog();
     }
 
@@ -894,11 +1121,17 @@
         }
 
         const state = await api('/api/game/get_state?game_id=' + encodeURIComponent(app.gameId));
-        app.state = state.game || {};
-        app.players = state.players || [];
-        app.events = state.events || [];
+        app.state      = state.game || {};
+        app.hand       = state.hand || null;
+        app.scores     = state.scores || null;
+        app.players    = state.players || [];
+        app.events     = state.events || [];
         app.viewerHand = Array.isArray(state.viewer_hand) ? state.viewer_hand : [];
         app.viewerSeat = findViewerSeat();
+        // Clear discard selection if phase changed away from discard_phase
+        if (String(app.state.current_phase) !== 'discard_phase') {
+          app.selectedDiscards = [];
+        }
         renderBoard();
 
         if (app.viewerSeat === null) {
@@ -931,41 +1164,92 @@
       }
     }
 
-    async function playCard() {
+    async function playCard(code) {
       if (!Number.isInteger(app.viewerSeat)) {
         status('Join the game before playing.', 'error');
         return;
       }
-      const card = byId('cardInput').value.trim().toUpperCase();
-      if (!card) {
-        status('Enter a card code first.', 'error');
-        return;
-      }
-
+      if (!code) return;
       try {
-        status('Playing card...', '');
+        status('Playing ' + cardLabel(code) + '…', '');
         const res = await api('/api/game/play_card', 'POST', {
           game_id: app.gameId,
           seat: app.viewerSeat,
-          card: card,
+          card: code,
         }, true);
-        status('Card accepted: ' + (res.code || 'ok'), 'success');
-        byId('cardInput').value = '';
+        status('Played ' + cardLabel(code), 'success');
         await refreshAll();
       } catch (err) {
         status('Play failed: ' + err.message, 'error');
       }
     }
 
+    function toggleDiscard(code) {
+      const idx = app.selectedDiscards.indexOf(code);
+      if (idx === -1) {
+        app.selectedDiscards.push(code);
+      } else {
+        app.selectedDiscards.splice(idx, 1);
+      }
+      // Re-render just the viewer zone and controls (fast, no server round-trip)
+      const viewerSide = app.viewerSeat !== null
+        ? ['south', 'west', 'north', 'east'][(0 + 4) % 4]  // viewer is always south
+        : null;
+      renderPlayerZone('south');
+      renderControls();
+    }
+
+    async function discardCards() {
+      if (!Number.isInteger(app.viewerSeat)) {
+        status('Not seated.', 'error');
+        return;
+      }
+      try {
+        const cards = app.selectedDiscards.slice();
+        status('Discarding ' + cards.length + ' card(s)…', '');
+        await api('/api/game/discard_cards', 'POST', {
+          game_id: app.gameId,
+          seat: app.viewerSeat,
+          cards: cards,
+        }, true);
+        app.selectedDiscards = [];
+        status('Discard submitted.', 'success');
+        await refreshAll();
+      } catch (err) {
+        status('Discard failed: ' + err.message, 'error');
+      }
+    }
+
+    async function declareTrump(trump) {
+      if (!Number.isInteger(app.viewerSeat)) return;
+      try {
+        status('Declaring ' + SUIT_NAME[trump] + '…', '');
+        await api('/api/game/declare_trump', 'POST', {
+          game_id: app.gameId,
+          seat: app.viewerSeat,
+          trump: trump,
+        }, true);
+        status(SUIT_NAME[trump] + ' is trump.', 'success');
+        await refreshAll();
+      } catch (err) {
+        status('Trump failed: ' + err.message, 'error');
+      }
+    }
+
     function bindEvents() {
       byId('refreshBtn').addEventListener('click', refreshAll);
-      byId('playBtn').addEventListener('click', playCard);
+
       byId('bidRow').addEventListener('click', function (ev) {
-        const t = ev.target;
-        if (t && t.tagName === 'BUTTON' && t.dataset && t.dataset.bid) {
-          submitBid(t.dataset.bid);
-        }
+        const t = ev.target.closest('[data-bid]');
+        if (t) submitBid(t.dataset.bid);
       });
+
+      byId('trumpRow').addEventListener('click', function (ev) {
+        const t = ev.target.closest('[data-trump]');
+        if (t && !t.disabled) declareTrump(t.dataset.trump);
+      });
+
+      byId('discardBtn').addEventListener('click', discardCards);
     }
 
     function parseGameId() {

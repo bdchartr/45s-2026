@@ -652,7 +652,7 @@ final class Routes
             ]);
         });
 
-        $app->get('/api/game/get_state', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $buildShuffledDeck): ResponseInterface {
+        $app->get('/api/game/get_state', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
             try {
                 $params = $request->getQueryParams();
                 $gameId = (int) ($params['game_id'] ?? 0);
@@ -681,47 +681,40 @@ final class Routes
                     return $json($response, ['ok' => false, 'error' => 'forbidden_for_viewer'], 403);
                 }
 
-                $players = $repo->listPlayers($gameId);
-                $events = $repo->listEventsAfter($gameId, 0, 200);
+                $players    = $repo->listPlayers($gameId);
+                $events     = $repo->listEventsAfter($gameId, 0, 200);
                 $viewerSeat = $repo->findSeatForUser($gameId, $viewerUserId);
-                $viewerHand = [];
-                if ($viewerSeat !== null) {
-                    $deck = $buildShuffledDeck($gameId);
-                    $hands = [0 => [], 1 => [], 2 => [], 3 => []];
-                    for ($round = 0; $round < 5; $round++) {
-                        for ($seat = 0; $seat < 4; $seat++) {
-                            $card = array_shift($deck);
-                            if ($card !== null) {
-                                $hands[$seat][] = $card;
-                            }
-                        }
-                    }
+                $currentHand = $repo->findCurrentHand($gameId);
 
-                    $viewerHand = $hands[$viewerSeat] ?? [];
-                    foreach ($events as $event) {
-                        if (($event['event_type'] ?? '') !== 'card_played') {
-                            continue;
-                        }
-                        if ((int) ($event['actor_seat'] ?? -1) !== (int) $viewerSeat) {
-                            continue;
-                        }
-                        $payload = (isset($event['payload']) && is_array($event['payload'])) ? $event['payload'] : [];
-                        $played = strtoupper(trim((string) (($payload['card'] ?? ''))));
-                        $idx = array_search($played, $viewerHand, true);
-                        if ($idx !== false) {
-                            unset($viewerHand[$idx]);
-                            $viewerHand = array_values($viewerHand);
-                        }
-                    }
+                // Authoritative hand from hand_cards table
+                $viewerHand = [];
+                if ($viewerSeat !== null && $currentHand !== null) {
+                    $viewerHand = $repo->getSeatCards((int) $currentHand['id'], $viewerSeat) ?? [];
                 }
 
+                // Sanitised hand info for the client
+                $handInfo = null;
+                if ($currentHand !== null) {
+                    $handInfo = [
+                        'trump_suit'               => $currentHand['trump_suit'],
+                        'bid_winner_seat'           => $currentHand['bid_winner_seat'],
+                        'bid_value'                 => $currentHand['bid_value'],
+                        'is_30_for_60'              => (bool) ($currentHand['is_30_for_60'] ?? false),
+                        'dealer_extra_draw_pending' => (bool) ($currentHand['dealer_extra_draw_pending'] ?? false),
+                    ];
+                }
+
+                $scores = $repo->getRunningScores($gameId);
+
                 return $json($response, [
-                    'ok' => true,
-                    'game' => $state,
-                    'players' => $players,
-                    'events' => $events,
+                    'ok'          => true,
+                    'game'        => $state,
+                    'players'     => $players,
+                    'events'      => $events,
                     'viewer_seat' => $viewerSeat,
                     'viewer_hand' => $viewerHand,
+                    'hand'        => $handInfo,
+                    'scores'      => $scores,
                 ]);
             } catch (\Throwable $ex) {
                 return $json($response, ['ok' => false, 'error' => 'get_state_failed', 'detail' => $ex->getMessage()], 500);
