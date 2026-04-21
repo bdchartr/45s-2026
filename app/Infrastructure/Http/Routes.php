@@ -6,6 +6,7 @@ namespace FortyFives\Infrastructure\Http;
 
 use FortyFives\Application\Contracts\ActionCommand;
 use FortyFives\Application\Services\GameRuntimeService;
+use FortyFives\Infrastructure\AI\AlgorithmicMoveProvider;
 use FortyFives\Infrastructure\Auth\SessionAuth;
 use FortyFives\Infrastructure\Persistence\Database;
 use FortyFives\Infrastructure\Persistence\GameRepository;
@@ -16,8 +17,9 @@ use Slim\App;
 
 final class Routes
 {
-    public static function register(App $app): void
+    public static function register(App $app, array $config = []): void
     {
+        $authConfig = $config['auth'] ?? [];
         $json = static function (ResponseInterface $response, array $payload, int $status = 200): ResponseInterface {
             $response->getBody()->write(json_encode($payload, JSON_THROW_ON_ERROR));
             return $response->withHeader('Content-Type', 'application/json')->withStatus($status);
@@ -96,7 +98,7 @@ final class Routes
             $accept = strtolower($request->getHeaderLine('Accept'));
             if ($accept === '' || strpos($accept, 'text/html') !== false) {
                 return $response
-                    ->withHeader('Location', '/45s/lobby.html')
+                    ->withHeader('Location', '/45/lobby.html')
                     ->withStatus(302);
             }
 
@@ -104,7 +106,7 @@ final class Routes
                 'ok' => true,
                 'service' => '45s-backend',
                 'message' => 'Service is running',
-                'health' => '/45s/health',
+                'health' => '/45/health',
             ];
             $response->getBody()->write(json_encode($payload, JSON_THROW_ON_ERROR));
             return $response->withHeader('Content-Type', 'application/json');
@@ -134,6 +136,24 @@ final class Routes
             return $json($response, [
                 'ok' => true,
                 'csrf_token' => $auth->csrfToken(),
+            ]);
+        });
+
+        $app->get('/api/auth/providers', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $authConfig): ResponseInterface {
+            $googleClientId  = trim((string) ($authConfig['google_client_id']  ?? ''));
+            $facebookAppId   = trim((string) ($authConfig['facebook_app_id']   ?? ''));
+            $appleServiceId  = trim((string) ($authConfig['apple_service_id']  ?? ''));
+
+            return $json($response, [
+                'google'   => $googleClientId !== ''
+                    ? ['enabled' => true,  'client_id'  => $googleClientId]
+                    : ['enabled' => false],
+                'facebook' => $facebookAppId !== ''
+                    ? ['enabled' => true,  'app_id'     => $facebookAppId]
+                    : ['enabled' => false],
+                'apple'    => $appleServiceId !== ''
+                    ? ['enabled' => true,  'service_id' => $appleServiceId]
+                    : ['enabled' => false],
             ]);
         });
 
@@ -220,7 +240,7 @@ final class Routes
             ]);
         });
 
-        $app->post('/api/auth/google/login', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
+        $app->post('/api/auth/google/login', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $authConfig): ResponseInterface {
             $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? 'unknown');
             $limiter = RateLimiter::default();
             if (!$limiter->allow('auth_google:' . $ip, 15, 900)) {
@@ -245,8 +265,16 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'invalid_google_token'], 401);
             }
 
+            // Verify audience matches our client ID (prevents tokens issued for other apps)
+            $expectedClientId = trim((string) ($authConfig['google_client_id'] ?? ''));
+            if ($expectedClientId !== '' && ($claims['aud'] ?? '') !== $expectedClientId) {
+                return $json($response, ['ok' => false, 'error' => 'invalid_google_token_audience'], 401);
+            }
+
             $googleSub = (string) $claims['sub'];
-            $email = isset($claims['email']) ? (string) $claims['email'] : null;
+            $email     = isset($claims['email']) ? (string) $claims['email'] : null;
+            $nickname  = isset($claims['name'])  ? (string) $claims['name']  : null;
+
             $usernameFallback = $email !== null ? explode('@', $email)[0] : ('google_' . substr($googleSub, 0, 12));
             $usernameBase = preg_replace('/[^a-zA-Z0-9_]/', '_', (string) $usernameFallback) ?: 'google_user';
 
@@ -260,8 +288,8 @@ final class Routes
                     $candidate = $usernameBase . '_' . $suffix;
                 }
 
-                $userId = $repo->createGoogleUser($candidate, $email, $googleSub, 'player');
-                $user = $repo->findUserById($userId);
+                $userId = $repo->createSocialUser($candidate, $email, 'google', $googleSub, $nickname, 'player');
+                $user   = $repo->findUserById($userId);
             }
 
             if ($user === null) {
@@ -272,12 +300,153 @@ final class Routes
             $auth->signIn((int) $user['id']);
 
             return $json($response, [
-                'ok' => true,
-                'user_id' => (int) $user['id'],
-                'username' => (string) $user['username'],
-                'role' => (string) ($user['role'] ?? 'player'),
+                'ok'           => true,
+                'user_id'      => (int) $user['id'],
+                'username'     => (string) $user['username'],
+                'display_name' => (string) ($user['nickname'] ?? $user['username']),
+                'role'         => (string) ($user['role'] ?? 'player'),
                 'auth_provider' => 'google',
-                'csrf_token' => $auth->csrfToken(),
+                'csrf_token'   => $auth->csrfToken(),
+            ]);
+        });
+
+        $app->post('/api/auth/facebook/login', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
+            $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? 'unknown');
+            $limiter = RateLimiter::default();
+            if (!$limiter->allow('auth_facebook:' . $ip, 15, 900)) {
+                $retry = $limiter->retryAfterSeconds('auth_facebook:' . $ip, 900);
+                return $json($response, ['ok' => false, 'error' => 'rate_limited', 'retry_after' => $retry], 429);
+            }
+
+            $body        = (array) ($request->getParsedBody() ?? []);
+            $accessToken = trim((string) ($body['access_token'] ?? ''));
+            $claimedId   = trim((string) ($body['user_id']     ?? ''));
+
+            if ($accessToken === '' || $claimedId === '') {
+                return $json($response, ['ok' => false, 'error' => 'access_token_and_user_id_required'], 400);
+            }
+
+            // Verify token by calling Graph API and confirming the user ID matches
+            $meUrl    = 'https://graph.facebook.com/me?fields=id,name,first_name,last_name,email&access_token=' . rawurlencode($accessToken);
+            $meJson   = @file_get_contents($meUrl);
+            if ($meJson === false) {
+                return $json($response, ['ok' => false, 'error' => 'facebook_token_verification_failed'], 401);
+            }
+
+            $me = json_decode($meJson, true);
+            if (!is_array($me) || !isset($me['id'])) {
+                return $json($response, ['ok' => false, 'error' => 'invalid_facebook_token'], 401);
+            }
+            if ((string) $me['id'] !== $claimedId) {
+                return $json($response, ['ok' => false, 'error' => 'facebook_user_id_mismatch'], 401);
+            }
+
+            $fbSub    = (string) $me['id'];
+            $email    = isset($me['email'])      ? (string) $me['email'] : null;
+            $fullName = isset($me['name'])        ? (string) $me['name'] : null;
+
+            $usernameFallback = $email !== null
+                ? explode('@', $email)[0]
+                : ('fb_' . substr($fbSub, 0, 10));
+            $usernameBase = preg_replace('/[^a-zA-Z0-9_]/', '_', (string) $usernameFallback) ?: 'fb_user';
+
+            $repo = new GameRepository(Database::fromConfig());
+            $user = $repo->findUserByProviderSub('facebook', $fbSub);
+            if ($user === null) {
+                $candidate = $usernameBase;
+                $suffix = 1;
+                while ($repo->findUserByUsername($candidate) !== null) {
+                    $suffix++;
+                    $candidate = $usernameBase . '_' . $suffix;
+                }
+
+                $userId = $repo->createSocialUser($candidate, $email, 'facebook', $fbSub, $fullName, 'player');
+                $user   = $repo->findUserById($userId);
+            }
+
+            if ($user === null) {
+                return $json($response, ['ok' => false, 'error' => 'facebook_login_failed'], 500);
+            }
+
+            $auth = new SessionAuth();
+            $auth->signIn((int) $user['id']);
+
+            return $json($response, [
+                'ok'           => true,
+                'user_id'      => (int) $user['id'],
+                'username'     => (string) $user['username'],
+                'display_name' => (string) ($user['nickname'] ?? $user['username']),
+                'role'         => (string) ($user['role'] ?? 'player'),
+                'auth_provider' => 'facebook',
+                'csrf_token'   => $auth->csrfToken(),
+            ]);
+        });
+
+        $app->post('/api/auth/apple/login', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $authConfig): ResponseInterface {
+            $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? 'unknown');
+            $limiter = RateLimiter::default();
+            if (!$limiter->allow('auth_apple:' . $ip, 15, 900)) {
+                $retry = $limiter->retryAfterSeconds('auth_apple:' . $ip, 900);
+                return $json($response, ['ok' => false, 'error' => 'rate_limited', 'retry_after' => $retry], 429);
+            }
+
+            $body       = (array) ($request->getParsedBody() ?? []);
+            $idToken    = trim((string) ($body['id_token']   ?? ''));
+            $firstName  = isset($body['first_name']) ? trim((string) $body['first_name']) : null;
+            $lastName   = isset($body['last_name'])  ? trim((string) $body['last_name'])  : null;
+
+            if ($idToken === '') {
+                return $json($response, ['ok' => false, 'error' => 'id_token_required'], 400);
+            }
+
+            $serviceId = trim((string) ($authConfig['apple_service_id'] ?? ''));
+            $claims = self::verifyAppleIdToken($idToken, $serviceId);
+            if ($claims === false) {
+                return $json($response, ['ok' => false, 'error' => 'invalid_apple_token'], 401);
+            }
+
+            $appleSub = (string) $claims['sub'];
+            $email    = isset($claims['email']) ? (string) $claims['email'] : null;
+
+            $nickname = null;
+            if ($firstName !== null || $lastName !== null) {
+                $nickname = trim(($firstName ?? '') . ' ' . ($lastName ?? '')) ?: null;
+            }
+
+            $usernameFallback = $email !== null
+                ? explode('@', $email)[0]
+                : ('apple_' . substr($appleSub, 0, 10));
+            $usernameBase = preg_replace('/[^a-zA-Z0-9_]/', '_', (string) $usernameFallback) ?: 'apple_user';
+
+            $repo = new GameRepository(Database::fromConfig());
+            $user = $repo->findUserByProviderSub('apple', $appleSub);
+            if ($user === null) {
+                $candidate = $usernameBase;
+                $suffix = 1;
+                while ($repo->findUserByUsername($candidate) !== null) {
+                    $suffix++;
+                    $candidate = $usernameBase . '_' . $suffix;
+                }
+
+                $userId = $repo->createSocialUser($candidate, $email, 'apple', $appleSub, $nickname, 'player');
+                $user   = $repo->findUserById($userId);
+            }
+
+            if ($user === null) {
+                return $json($response, ['ok' => false, 'error' => 'apple_login_failed'], 500);
+            }
+
+            $auth = new SessionAuth();
+            $auth->signIn((int) $user['id']);
+
+            return $json($response, [
+                'ok'           => true,
+                'user_id'      => (int) $user['id'],
+                'username'     => (string) $user['username'],
+                'display_name' => (string) ($user['nickname'] ?? $user['username']),
+                'role'         => (string) ($user['role'] ?? 'player'),
+                'auth_provider' => 'apple',
+                'csrf_token'   => $auth->csrfToken(),
             ]);
         });
 
@@ -450,6 +619,72 @@ final class Routes
             return $json($response, ['ok' => true, 'user_id' => $userId, 'role' => $role]);
         });
 
+        $app->post('/api/admin/delete_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireOwnerOrAdmin, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authz = $requireOwnerOrAdmin($response);
+            if (isset($authz['error_response'])) {
+                return $authz['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo = $authz['repo'];
+            $body = (array) ($request->getParsedBody() ?? []);
+            $gameId = (int) ($body['game_id'] ?? 0);
+
+            if ($gameId <= 0) {
+                return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
+            }
+
+            $archived = $repo->archiveGame($gameId);
+            if (!$archived) {
+                return $json($response, ['ok' => false, 'error' => 'game_not_found'], 404);
+            }
+
+            return $json($response, ['ok' => true, 'deleted_game_id' => $gameId]);
+        });
+
+        // Any authenticated user can archive a game they created.
+        $app->post('/api/lobby/archive_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
+            $body = (array) ($request->getParsedBody() ?? []);
+            $gameId = (int) ($body['game_id'] ?? 0);
+
+            if ($gameId <= 0) {
+                return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
+            }
+
+            $userId = (int) $authn['user_id'];
+            $role   = $authn['role'];
+
+            // Admins and owners can archive any game; players only their own.
+            if (in_array($role, ['owner', 'admin'], true)) {
+                $archived = $repo->archiveGame($gameId);
+            } else {
+                $archived = $repo->archiveGameOwnedBy($gameId, $userId);
+            }
+
+            if (!$archived) {
+                return $json($response, ['ok' => false, 'error' => 'game_not_found_or_not_yours'], 404);
+            }
+
+            return $json($response, ['ok' => true, 'archived_game_id' => $gameId]);
+        });
+
         $app->post('/api/lobby/create_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
@@ -462,12 +697,20 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'target_score must be 45 or 120'], 400);
             }
 
+            $playerCount = (int) ($body['player_count'] ?? 4);
+            if (!in_array($playerCount, [4, 6], true)) {
+                return $json($response, ['ok' => false, 'error' => 'player_count must be 4 or 6'], 400);
+            }
+
             $ruleset = (string) ($body['ruleset'] ?? 'chartrand');
             $userId = isset($body['user_id']) ? (int) $body['user_id'] : null;
             $aiSeats = (array) ($body['ai_seats'] ?? []);
             $inviteMode = strtolower((string) ($body['invite_mode'] ?? 'open'));
             $invites = (array) ($body['invites'] ?? []);
-            $aiMap = [0 => false, 1 => false, 2 => false, 3 => false];
+            $aiMap = [];
+            for ($s = 0; $s < $playerCount; $s++) {
+                $aiMap[$s] = false;
+            }
             foreach ($aiSeats as $seat) {
                 $seatInt = (int) $seat;
                 if (array_key_exists($seatInt, $aiMap)) {
@@ -487,8 +730,8 @@ final class Routes
                 }
                 $seat = (int) ($invite['seat'] ?? -1);
                 $inviteUserId = (int) ($invite['user_id'] ?? 0);
-                if ($seat < 1 || $seat > 5) {
-                    return $json($response, ['ok' => false, 'error' => 'invite seat must be in range 1..3'], 400);
+                if ($seat < 1 || $seat >= $playerCount) {
+                    return $json($response, ['ok' => false, 'error' => 'invite seat out of range'], 400);
                 }
                 if ($inviteUserId <= 0) {
                     return $json($response, ['ok' => false, 'error' => 'invite user_id must be positive'], 400);
@@ -509,7 +752,17 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'specific invite_mode requires invites'], 400);
             }
 
+            // Seat 0 is always the human creator — never AI.
             $aiMap[0] = false;
+            // In non-open modes, any seat without an invite and not already marked AI
+            // becomes AI — prevents ghost slots that would stall the game forever.
+            if ($inviteMode !== 'open') {
+                for ($s = 1; $s < $playerCount; $s++) {
+                    if (!$aiMap[$s] && !isset($inviteBySeat[$s])) {
+                        $aiMap[$s] = true;
+                    }
+                }
+            }
 
             $repo = new GameRepository(Database::fromConfig());
             if ($userId !== null && !$repo->userExists($userId)) {
@@ -527,9 +780,9 @@ final class Routes
             }
 
             try {
-                $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode): int {
-                    $gameId = $repo->createGame($targetScore, $ruleset, $userId);
-                    for ($seat = 0; $seat < 4; $seat++) {
+                $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode, $playerCount): int {
+                    $gameId = $repo->createGame($targetScore, $ruleset, $userId, $playerCount);
+                    for ($seat = 0; $seat < $playerCount; $seat++) {
                         $isAi = $aiMap[$seat];
                         $seatUserId = null;
                         $connected = false;
@@ -616,6 +869,126 @@ final class Routes
             return $json($response, ['ok' => true, 'seat' => $seat]);
         });
 
+        // ── Player profile & stats ────────────────────────────────────────────────
+
+        $app->get('/api/player/stats', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated): ResponseInterface {
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo         = $authn['repo'];
+            $params       = $request->getQueryParams();
+            $targetUserId = (int) ($params['user_id'] ?? 0);
+            if ($targetUserId <= 0) {
+                $targetUserId = (int) $authn['user_id'];
+            }
+
+            $user = $repo->findUserById($targetUserId);
+            if ($user === null) {
+                return $json($response, ['ok' => false, 'error' => 'user_not_found'], 404);
+            }
+
+            return $json($response, [
+                'ok'    => true,
+                'user'  => [
+                    'id'           => (int) $user['id'],
+                    'username'     => (string) $user['username'],
+                    'nickname'     => $user['nickname'] ?? null,
+                    'display_name' => $user['nickname'] ?: $user['username'],
+                    'avatar_code'  => $user['avatar_code'] ?? null,
+                    'gravatar_url' => 'https://www.gravatar.com/avatar/' . md5(strtolower(trim((string) ($user['email'] ?? '')))) . '?s=80&d=identicon',
+                    'role'         => (string) ($user['role'] ?? 'player'),
+                    'member_since' => substr((string) ($user['created_at'] ?? ''), 0, 10),
+                ],
+                'stats' => $repo->statsForUser($targetUserId),
+            ]);
+        });
+
+        $app->post('/api/player/update_nickname', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo     = $authn['repo'];
+            $userId   = (int) $authn['user_id'];
+            $body     = (array) ($request->getParsedBody() ?? []);
+            $nickname = trim((string) ($body['nickname'] ?? ''));
+
+            if (mb_strlen($nickname) > 60) {
+                return $json($response, ['ok' => false, 'error' => 'nickname_too_long'], 400);
+            }
+
+            $repo->updateNickname($userId, $nickname ?: null);
+            return $json($response, ['ok' => true, 'display_name' => $nickname ?: null]);
+        });
+
+        $app->post('/api/player/update_avatar', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo       = $authn['repo'];
+            $userId     = (int) $authn['user_id'];
+            $body       = (array) ($request->getParsedBody() ?? []);
+            $avatarCode = trim((string) ($body['avatar_code'] ?? ''));
+
+            if ($avatarCode === '' || mb_strlen($avatarCode) > 20) {
+                return $json($response, ['ok' => false, 'error' => 'invalid_avatar_code'], 400);
+            }
+
+            $repo->updateAvatar($userId, $avatarCode);
+            return $json($response, ['ok' => true]);
+        });
+
+        $app->post('/api/player/update_password', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo            = $authn['repo'];
+            $userId          = (int) $authn['user_id'];
+            $body            = (array) ($request->getParsedBody() ?? []);
+            $currentPassword = (string) ($body['current_password'] ?? '');
+            $newPassword     = (string) ($body['new_password']     ?? '');
+
+            if (mb_strlen($newPassword) < 8) {
+                return $json($response, ['ok' => false, 'error' => 'password_too_short'], 400);
+            }
+
+            $user = $repo->findUserById($userId);
+            if ($user === null || !password_verify($currentPassword, (string) ($user['password_hash'] ?? ''))) {
+                return $json($response, ['ok' => false, 'error' => 'wrong_current_password'], 403);
+            }
+
+            $repo->updatePassword($userId, password_hash($newPassword, PASSWORD_DEFAULT));
+            return $json($response, ['ok' => true]);
+        });
+
+        // ── Lobby ────────────────────────────────────────────────────────────────
+
         $app->get('/api/lobby/my_games', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
             $params = $request->getQueryParams();
             $userId = (int) ($params['user_id'] ?? 0);
@@ -628,10 +1001,19 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
             }
 
-            return $json($response, [
-                'ok' => true,
-                'games' => $repo->listGamesForUser($userId, 200),
-            ]);
+            $games   = $repo->listGamesForUser($userId, 200);
+            $gameIds = array_column($games, 'id');
+            $flat    = $repo->listPlayersWithUsernamesForGames($gameIds);
+            $byGame  = [];
+            foreach ($flat as $p) {
+                $byGame[$p['game_id']][] = $p;
+            }
+            foreach ($games as &$g) {
+                $g['players'] = $byGame[$g['id']] ?? [];
+            }
+            unset($g);
+
+            return $json($response, ['ok' => true, 'games' => $games]);
         });
 
         $app->get('/api/lobby/list_joinable', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
@@ -646,10 +1028,30 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
             }
 
-            return $json($response, [
-                'ok' => true,
-                'games' => $repo->listJoinableGamesForUser($userId, 200),
-            ]);
+            $games   = $repo->listJoinableGamesForUser($userId, 200);
+            $gameIds = array_column($games, 'id');
+            $flat    = $repo->listPlayersWithUsernamesForGames($gameIds);
+            $byGame  = [];
+            foreach ($flat as $p) {
+                $byGame[$p['game_id']][] = $p;
+            }
+            foreach ($games as &$g) {
+                $g['players'] = $byGame[$g['id']] ?? [];
+            }
+            unset($g);
+
+            return $json($response, ['ok' => true, 'games' => $games]);
+        });
+
+        $app->get('/api/lobby/users', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
+            $auth = new SessionAuth();
+            $viewerUserId = $auth->userId();
+            if ($viewerUserId === null) {
+                return $json($response, ['ok' => false, 'error' => 'authentication_required'], 401);
+            }
+            $repo = new GameRepository(Database::fromConfig());
+            $users = $repo->listUsersForLobby($viewerUserId);
+            return $json($response, ['ok' => true, 'users' => $users]);
         });
 
         $app->get('/api/game/get_state', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
@@ -681,8 +1083,14 @@ final class Routes
                     return $json($response, ['ok' => false, 'error' => 'forbidden_for_viewer'], 403);
                 }
 
+                // Advance AI turns so the returned state already reflects AI moves.
+                (new GameRuntimeService($repo))->runAiTurns($gameId, new AlgorithmicMoveProvider());
+
+                // Re-fetch state after AI may have mutated it
+                $state = $repo->findGameState($gameId) ?? $state;
+
                 $players    = $repo->listPlayers($gameId);
-                $events     = $repo->listEventsAfter($gameId, 0, 200);
+                $events     = $repo->listEventsAfter($gameId, 0, 300);
                 $viewerSeat = $repo->findSeatForUser($gameId, $viewerUserId);
                 $currentHand = $repo->findCurrentHand($gameId);
 
@@ -853,5 +1261,128 @@ final class Routes
                 'state_patch' => $result->statePatch,
             ], $status);
         });
+    }
+
+    /**
+     * Verify an Apple id_token JWT using Apple's public JWKS.
+     * Returns the decoded payload array on success, or false on failure.
+     *
+     * @return array<string,mixed>|false
+     */
+    private static function verifyAppleIdToken(string $idToken, string $expectedAud): array|false
+    {
+        $parts = explode('.', $idToken);
+        if (count($parts) !== 3) {
+            return false;
+        }
+
+        [$headerB64, $payloadB64, $signatureB64] = $parts;
+
+        $header  = json_decode(base64_decode(strtr($headerB64,  '-_', '+/')), true);
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+
+        if (!is_array($header) || !is_array($payload)) {
+            return false;
+        }
+
+        // Validate standard claims
+        if (($payload['iss'] ?? '') !== 'https://appleid.apple.com') {
+            return false;
+        }
+        if ($expectedAud !== '' && ($payload['aud'] ?? '') !== $expectedAud) {
+            return false;
+        }
+        if (($payload['exp'] ?? 0) < time()) {
+            return false;
+        }
+        if (!isset($payload['sub'])) {
+            return false;
+        }
+
+        // Fetch Apple's public JWKS
+        $jwksJson = @file_get_contents('https://appleid.apple.com/auth/keys');
+        if ($jwksJson === false) {
+            return false;
+        }
+        $jwks = json_decode($jwksJson, true);
+        if (!is_array($jwks)) {
+            return false;
+        }
+
+        // Find the key matching the token's kid header
+        $kid       = (string) ($header['kid'] ?? '');
+        $matchedKey = null;
+        foreach ($jwks['keys'] ?? [] as $key) {
+            if (($key['kid'] ?? '') === $kid) {
+                $matchedKey = $key;
+                break;
+            }
+        }
+        if ($matchedKey === null) {
+            return false;
+        }
+
+        // Build RSA public key PEM from JWK n/e
+        $pem = self::rsaJwkToPem($matchedKey);
+        if ($pem === null) {
+            return false;
+        }
+
+        // Verify RS256 signature
+        $signingInput = $headerB64 . '.' . $payloadB64;
+        $signature    = base64_decode(strtr($signatureB64, '-_', '+/'));
+        $result       = openssl_verify($signingInput, $signature, $pem, OPENSSL_ALGO_SHA256);
+
+        if ($result !== 1) {
+            return false;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Convert an RSA JWK (with n and e fields) into a PEM public key string.
+     *
+     * @param array<string,mixed> $jwk
+     */
+    private static function rsaJwkToPem(array $jwk): ?string
+    {
+        $n = isset($jwk['n']) ? base64_decode(strtr((string) $jwk['n'], '-_', '+/')) : null;
+        $e = isset($jwk['e']) ? base64_decode(strtr((string) $jwk['e'], '-_', '+/')) : null;
+
+        if ($n === null || $e === null || $n === '' || $e === '') {
+            return null;
+        }
+
+        // Encode value as ASN.1 DER integer (prepend 0x00 if high bit is set)
+        $encodeInt = static function (string $bytes): string {
+            if (ord($bytes[0]) & 0x80) {
+                $bytes = "\x00" . $bytes;
+            }
+            return $bytes;
+        };
+
+        // Encode a DER length in minimal form
+        $encodeLen = static function (int $len): string {
+            if ($len < 0x80) {
+                return chr($len);
+            }
+            if ($len < 0x100) {
+                return "\x81" . chr($len);
+            }
+            return "\x82" . chr($len >> 8) . chr($len & 0xff);
+        };
+
+        $nDer  = "\x02" . $encodeLen(strlen($encodeInt($n))) . $encodeInt($n);
+        $eDer  = "\x02" . $encodeLen(strlen($encodeInt($e))) . $encodeInt($e);
+        $inner = $nDer . $eDer;
+        $seq   = "\x30" . $encodeLen(strlen($inner)) . $inner;
+
+        // rsaEncryption OID: 1.2.840.113549.1.1.1, null params
+        $algId  = "\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00";
+        $bitStr = "\x03" . $encodeLen(strlen($seq) + 1) . "\x00" . $seq;
+        $spki   = "\x30" . $encodeLen(strlen($algId) + strlen($bitStr)) . $algId . $bitStr;
+
+        return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
     }
 }

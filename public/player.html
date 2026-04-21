@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Player Profile · 45</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+    :root {
+      --bg-1: #f2efe8; --bg-2: #e7ddd0; --paper: #fffdf8;
+      --ink: #1d2126; --muted: #5c6670; --line: #d0c6b8;
+      --brand: #0d6f66; --brand-dark: #0a5952; --brand-bg: #e8f5f3;
+      --accent: #d97a22; --good: #1f8a47; --bad: #a32121;
+      --shadow: 0 16px 40px rgba(38,33,21,0.14);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Chivo', 'Avenir Next', 'Segoe UI', sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 12% 6%, rgba(217,122,34,0.18), transparent 34%),
+                  radial-gradient(circle at 88% 16%, rgba(13,111,102,0.18), transparent 30%),
+                  linear-gradient(165deg, var(--bg-1), var(--bg-2));
+      min-height: 100vh;
+    }
+    .shell { max-width: 660px; margin: 0 auto; padding: 24px 16px 48px; }
+
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 13px; color: var(--muted); text-decoration: none;
+      margin-bottom: 16px; transition: color 0.15s;
+    }
+    .back-link:hover { color: var(--ink); }
+
+    .profile-card {
+      background: var(--paper); border: 1px solid var(--line);
+      border-radius: 18px; box-shadow: var(--shadow); overflow: hidden;
+    }
+
+    .profile-header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 22px 24px 18px; border-bottom: 1px solid var(--line);
+    }
+    .av-large {
+      width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; color: #fff; background: #aaa;
+      font-family: sans-serif;
+    }
+    .profile-name { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.1; }
+    .profile-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
+    .role-badge {
+      display: inline-block; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      border-radius: 4px; padding: 2px 7px; margin-left: 6px;
+      background: var(--brand-bg); color: var(--brand); vertical-align: middle;
+    }
+
+    .tab-bar {
+      display: flex; background: #f9f4ee; border-bottom: 1px solid var(--line); padding: 0 24px;
+    }
+    .tab-btn {
+      padding: 11px 16px; font: 600 13px/1 'Chivo', sans-serif;
+      color: var(--muted); cursor: pointer; border: none; background: none;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 0.15s; white-space: nowrap;
+    }
+    .tab-btn:hover { color: var(--ink); }
+    .tab-btn.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+    .tab-content { padding: 22px 24px; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* KPIs */
+    .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+    .kpi {
+      background: #f5f0e8; border: 1px solid #e8dfd2; border-radius: 12px;
+      padding: 14px 12px; text-align: center;
+    }
+    .kpi-val { font-size: 26px; font-weight: 800; line-height: 1; }
+    .kpi-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: 4px; }
+
+    .section-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); margin: 18px 0 8px;
+    }
+    .section-title:first-child { margin-top: 0; }
+
+    /* People table */
+    .people-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .people-table th, .people-table td {
+      padding: 7px 8px; border-bottom: 1px solid #ece4d8; text-align: left;
+    }
+    .people-table th {
+      color: var(--muted); font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .people-table tr:last-child td { border-bottom: none; }
+    .win-bar {
+      display: inline-block; height: 7px; border-radius: 4px;
+      background: var(--brand); vertical-align: middle; min-width: 2px;
+    }
+    .player-link { color: var(--brand); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+    .player-link:hover { color: var(--brand-dark); }
+
+    /* Chart */
+    .chart-wrap { background: #f9f5ee; border-radius: 10px; padding: 10px; margin-bottom: 4px; }
+    .no-data { text-align: center; padding: 24px; color: var(--muted); font-size: 13px; }
+
+    /* Account */
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .form-input {
+      width: 100%; border-radius: 8px; border: 1px solid #c5baa8;
+      padding: 10px; font: inherit; font-size: 13px; color: var(--ink); background: white;
+    }
+    .form-btn {
+      border: none; border-radius: 8px; padding: 10px 20px;
+      font: 700 13px 'Chivo', sans-serif; cursor: pointer; color: white;
+      background: var(--brand); transition: background 0.15s;
+    }
+    .form-btn:hover { background: var(--brand-dark); }
+    .form-msg { margin-top: 6px; min-height: 18px; font-size: 12px; }
+    .form-msg.ok  { color: var(--good); }
+    .form-msg.err { color: var(--bad); }
+
+    .avatar-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; margin-top: 8px; }
+    .av-opt {
+      width: 38px; height: 38px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; color: white; cursor: pointer;
+      border: 3px solid transparent; transition: border-color 0.15s, transform 0.1s;
+      font-family: sans-serif;
+    }
+    .av-opt:hover { transform: scale(1.12); }
+    .av-opt.selected { border-color: white; box-shadow: 0 0 0 3px var(--brand); }
+
+    .spinner { text-align: center; padding: 40px; color: var(--muted); }
+    .error-box {
+      text-align: center; padding: 32px; color: var(--bad);
+      background: #fff5f5; border-radius: 12px; margin: 8px;
+    }
+
+    @media (max-width: 480px) {
+      .kpi-row { grid-template-columns: repeat(3,1fr); gap: 8px; }
+      .kpi-val { font-size: 20px; }
+      .avatar-grid { grid-template-columns: repeat(5,1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <a class="back-link" id="backLink" href="#">← Lobby</a>
+    <div class="profile-card" id="profileCard">
+      <div class="spinner">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    const BASE  = '/45';
+    let CSRF    = '';
+    let ME_ID   = null;
+    let currentUserId = null;
+
+    // ── Avatars ──────────────────────────────────────────────────────────────
+    const AVATARS = [
+      { code: 's-teal',   bg: '#0d6f66', sym: '♠' },
+      { code: 'h-teal',   bg: '#0d6f66', sym: '♥' },
+      { code: 'd-teal',   bg: '#0d6f66', sym: '♦' },
+      { code: 'c-teal',   bg: '#0d6f66', sym: '♣' },
+      { code: 's-amber',  bg: '#c26a10', sym: '♠' },
+      { code: 'h-amber',  bg: '#c26a10', sym: '♥' },
+      { code: 'd-amber',  bg: '#c26a10', sym: '♦' },
+      { code: 'c-amber',  bg: '#c26a10', sym: '♣' },
+      { code: 's-purple', bg: '#6b21a8', sym: '♠' },
+      { code: 'h-purple', bg: '#6b21a8', sym: '♥' },
+      { code: 'd-purple', bg: '#6b21a8', sym: '♦' },
+      { code: 'c-purple', bg: '#6b21a8', sym: '♣' },
+      { code: 's-navy',   bg: '#1e3a5f', sym: '♠' },
+      { code: 'h-navy',   bg: '#1e3a5f', sym: '♥' },
+      { code: 'd-navy',   bg: '#1e3a5f', sym: '♦' },
+      { code: 'c-navy',   bg: '#1e3a5f', sym: '♣' },
+      { code: 's-rose',   bg: '#9f1239', sym: '♠' },
+      { code: 'h-rose',   bg: '#9f1239', sym: '♥' },
+      { code: 'd-rose',   bg: '#9f1239', sym: '♦' },
+      { code: 'c-rose',   bg: '#9f1239', sym: '♣' },
+    ];
+    function avForCode(code) { return AVATARS.find(a => a.code === code) || { bg: '#888', sym: '?' }; }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── API ──────────────────────────────────────────────────────────────────
+    async function api(path, method = 'GET', body = null) {
+      const opts = { method, credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF } };
+      if (body) opts.body = JSON.stringify(body);
+      const res = await fetch(BASE + path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data && data.error) || 'http_' + res.status);
+      return data;
+    }
+
+    // ── Chart ────────────────────────────────────────────────────────────────
+    function sparkline(monthly) {
+      if (!monthly || !monthly.length) return '<div class="no-data">No completed games yet.</div>';
+      const W = 500, H = 80, pad = 6;
+      const n = monthly.length;
+      const pts = monthly.map((m, i) => {
+        const x = pad + (i / Math.max(n - 1, 1)) * (W - 2 * pad);
+        const y = H - pad - (m.win_pct / 100) * (H - 2 * pad);
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      });
+      const y50 = H - pad - 0.5 * (H - 2 * pad);
+      const lastPt = pts[pts.length - 1].split(',');
+      const lastWin = monthly[monthly.length - 1].win_pct;
+      const first = monthly[0].month, last = monthly[n - 1].month;
+      return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H+18}" style="width:100%;display:block" xmlns="http://www.w3.org/2000/svg">
+        <line x1="${pad}" y1="${y50.toFixed(1)}" x2="${W-pad}" y2="${y50.toFixed(1)}" stroke="#e0d8cc" stroke-width="1" stroke-dasharray="4 4"/>
+        <text x="${W-pad-2}" y="${y50-3}" fill="#ccc" font-size="9" text-anchor="end">50%</text>
+        <polyline points="${pts.join(' ')}" fill="none" stroke="#0d6f66" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="4" fill="#0d6f66"/>
+        <text x="${lastPt[0]}" y="${parseFloat(lastPt[1])-7}" fill="#0d6f66" font-size="10" text-anchor="middle" font-weight="700">${lastWin}%</text>
+        <text x="${pad}" y="${H+14}" fill="#aaa" font-size="10">${first}</text>
+        <text x="${W-pad}" y="${H+14}" fill="#aaa" font-size="10" text-anchor="end">${last}</text>
+      </svg></div>`;
+    }
+
+    // ── Render helpers ───────────────────────────────────────────────────────
+    function peopleSection(rows, label) {
+      if (!rows || !rows.length) return '<div class="no-data">No ' + label + ' data yet.</div>';
+      let html = '<table class="people-table"><thead><tr><th>Player</th><th>Games</th><th>Wins</th><th>Win %</th><th></th></tr></thead><tbody>';
+      rows.forEach(r => {
+        const barW = Math.round(r.win_pct || 0);
+        html += '<tr>' +
+          '<td><span class="player-link" onclick="goPlayer(' + r.user_id + ')">' + esc(r.username || '#' + r.user_id) + '</span></td>' +
+          '<td>' + r.games + '</td>' +
+          '<td>' + r.wins + '</td>' +
+          '<td>' + (r.win_pct || 0) + '%</td>' +
+          '<td><span class="win-bar" style="width:' + barW + 'px"></span></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+      return html;
+    }
+
+    function goPlayer(uid) { window.location.href = BASE + '/player.html?user_id=' + uid; }
+
+    // ── Build page ───────────────────────────────────────────────────────────
+    function buildPage(data) {
+      const user  = data.user;
+      const stats = data.stats;
+      const isSelf = ME_ID && Number(ME_ID) === Number(user.id);
+      const av = user.avatar_code ? avForCode(user.avatar_code) : null;
+
+      document.title = user.username + ' · 45';
+
+      const tabs = ['stats'];
+      if (isSelf) tabs.push('account');
+
+      let tabHtml = tabs.map(t =>
+        '<button class="tab-btn" id="tab-' + t + '" onclick="switchTab(\'' + t + '\')">' +
+        (t === 'stats' ? 'Stats' : 'Account') + '</button>'
+      ).join('');
+
+      let avatarGridHtml = '<div class="avatar-grid">';
+      AVATARS.forEach(a => {
+        const sel = (user.avatar_code === a.code) ? ' selected' : '';
+        avatarGridHtml += '<div class="av-opt' + sel + '" style="background:' + a.bg + '" data-code="' + a.code + '" title="' + a.code + '">' + a.sym + '</div>';
+      });
+      avatarGridHtml += '</div>';
+
+      const statsHtml = `
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-val">${stats.games_played ?? 0}</div><div class="kpi-lbl">Played</div></div>
+          <div class="kpi"><div class="kpi-val">${stats.wins ?? 0}</div><div class="kpi-lbl">Wins</div></div>
+          <div class="kpi"><div class="kpi-val">${stats.win_pct != null ? stats.win_pct + '%' : '—'}</div><div class="kpi-lbl">Win Rate</div></div>
+        </div>
+        <div class="section-title">Win % Over Time</div>
+        ${sparkline(stats.monthly)}
+        <div class="section-title">Common Partners</div>
+        ${peopleSection(stats.partners, 'partner')}
+        <div class="section-title">Common Opponents</div>
+        ${peopleSection(stats.opponents, 'opponent')}
+      `;
+
+      const accountHtml = isSelf ? `
+        <div class="section-title">Display Name</div>
+        <div class="form-group">
+          <label>Shown on the board and in game lobbies. Defaults to your username.</label>
+          <input class="form-input" type="text" id="nick-input" maxlength="60"
+                 placeholder="${esc(user.username)}" value="${esc(user.nickname || '')}">
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="form-btn" onclick="saveNickname()">Save Name</button>
+          <span class="form-msg" id="nick-msg"></span>
+        </div>
+        <div class="section-title" style="margin-top:22px">Avatar</div>
+        ${avatarGridHtml}
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+          <button class="form-btn" onclick="saveAvatar()">Save Avatar</button>
+          <span class="form-msg" id="avatar-msg"></span>
+        </div>
+        <div class="section-title" style="margin-top:22px">Change Password</div>
+        <div class="form-group">
+          <label>Current Password</label>
+          <input class="form-input" type="password" id="pw-cur" autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label>New Password (8+ characters)</label>
+          <input class="form-input" type="password" id="pw-new" autocomplete="new-password">
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="form-btn" onclick="savePassword()">Change Password</button>
+          <span class="form-msg" id="pw-msg"></span>
+        </div>
+      ` : '';
+
+      document.getElementById('profileCard').innerHTML = `
+        <div class="profile-header">
+          <div class="av-large" id="avBig" style="background:${av ? av.bg : '#ddd'}">${av ? av.sym : (user.gravatar_url ? '<img src="' + user.gravatar_url + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;">' : '?')}</div>
+          <div>
+            <div class="profile-name">${esc(user.display_name || user.username)}<span class="role-badge">${esc(user.role || 'player')}</span></div>
+            <div class="profile-meta">${user.member_since ? 'Member since ' + esc(user.member_since) : ''}</div>
+          </div>
+        </div>
+        <div class="tab-bar">${tabHtml}</div>
+        <div class="tab-content">
+          <div class="panel" id="panel-stats">${statsHtml}</div>
+          ${isSelf ? '<div class="panel" id="panel-account">' + accountHtml + '</div>' : ''}
+        </div>
+      `;
+
+      switchTab('stats');
+
+      if (isSelf) {
+        document.querySelectorAll('.av-opt').forEach(el => {
+          el.addEventListener('click', () => {
+            document.querySelectorAll('.av-opt').forEach(x => x.classList.remove('selected'));
+            el.classList.add('selected');
+          });
+        });
+      }
+    }
+
+    function switchTab(id) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.id === 'tab-' + id));
+      document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + id));
+    }
+
+    async function saveNickname() {
+      const input = document.getElementById('nick-input');
+      const msg   = document.getElementById('nick-msg');
+      try {
+        const res = await api('/api/player/update_nickname', 'POST', { nickname: input.value.trim() });
+        msg.textContent = 'Saved!'; msg.className = 'form-msg ok';
+        // Update the displayed name in the header
+        const dn = res.display_name;
+        const nameEl = document.querySelector('.profile-name');
+        if (nameEl && dn) {
+          nameEl.childNodes[0].textContent = dn;
+        }
+      } catch (err) { msg.textContent = err.message; msg.className = 'form-msg err'; }
+    }
+
+    async function saveAvatar() {
+      const sel = document.querySelector('.av-opt.selected');
+      const msg = document.getElementById('avatar-msg');
+      if (!sel) { msg.textContent = 'Pick an avatar first.'; msg.className = 'form-msg err'; return; }
+      try {
+        await api('/api/player/update_avatar', 'POST', { avatar_code: sel.dataset.code });
+        msg.textContent = 'Saved!'; msg.className = 'form-msg ok';
+        const av = avForCode(sel.dataset.code);
+        const avEl = document.getElementById('avBig');
+        if (avEl) { avEl.innerHTML = ''; avEl.style.background = av.bg; avEl.textContent = av.sym; }
+      } catch (err) { msg.textContent = err.message; msg.className = 'form-msg err'; }
+    }
+
+    async function savePassword() {
+      const cur = document.getElementById('pw-cur');
+      const nxt = document.getElementById('pw-new');
+      const msg = document.getElementById('pw-msg');
+      try {
+        await api('/api/player/update_password', 'POST', {
+          current_password: cur.value, new_password: nxt.value,
+        });
+        msg.textContent = 'Password updated.'; msg.className = 'form-msg ok';
+        cur.value = ''; nxt.value = '';
+      } catch (err) { msg.textContent = err.message; msg.className = 'form-msg err'; }
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    (async () => {
+      // Set up back link
+      const backLink = document.getElementById('backLink');
+      backLink.href = BASE + '/lobby.html';
+
+      // Get session / CSRF
+      try {
+        const me = await api('/api/auth/me');
+        CSRF  = me.csrf_token || '';
+        ME_ID = me.user_id   || null;
+      } catch (_) {}
+
+      // Determine which user to show
+      const params = new URLSearchParams(window.location.search);
+      currentUserId = parseInt(params.get('user_id'), 10) || ME_ID || 0;
+
+      if (!currentUserId) {
+        document.getElementById('profileCard').innerHTML =
+          '<div class="error-box">Sign in to view profiles.</div>';
+        return;
+      }
+
+      try {
+        const data = await api('/api/player/stats?user_id=' + currentUserId);
+        buildPage(data);
+      } catch (err) {
+        document.getElementById('profileCard').innerHTML =
+          '<div class="error-box">Could not load profile: ' + esc(err.message) + '</div>';
+      }
+    })();
+  </script>
+</body>
+</html>

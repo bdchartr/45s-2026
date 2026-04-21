@@ -1,6 +1,6 @@
 {
   "name": "chartb/45s",
-  "description": "Forty-Fives backend and PWA",
+  "description": "45 (Chartrand Variant) backend and PWA",
   "type": "project",
   "require": {
     "php": ">=8.1",

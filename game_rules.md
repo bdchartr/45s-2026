@@ -1,10 +1,10 @@
-# Forty-Fives (45s) -- Game Rules
+# 45 (Chartrand Variant) -- Game Rules
 
 ## Overview
 
-Forty-Fives is a trick-taking card game played with a standard 52-card deck. It is widely popular in Atlantic Canada, particularly Newfoundland, Nova Scotia, and Prince Edward Island. The game is played by four players in two partnerships (sitting across from each other). Each hand consists of a bidding phase, a discard/draw phase, and five tricks. Points are scored based on tricks won.
+45 is a trick-taking card game played with a standard 52-card deck. It is widely popular in Atlantic Canada, particularly Newfoundland, Nova Scotia, and Prince Edward Island. The game is played by four players in two partnerships (sitting across from each other). Each hand consists of a bidding phase, a discard/draw phase, and five tricks. Points are scored based on tricks won.
 
-This document describes the house **Chartrand variant**, based on the **Newfoundland Variant**, of the game as the primary rule set.
+This document describes the **Chartrand variant**, based on the **Newfoundland Variant**, of the game as the primary rule set.
 
 ---
 

@@ -4,7 +4,7 @@ set -euo pipefail
 SERVER="wkapp.com"
 USER="chartb"
 PORT="2222"
-REMOTE_DIR="/home/chartb/public_html/45s"
+REMOTE_DIR="/home/chartb/public_html/45"
 
 cd "$(dirname "$0")/.."
 
@@ -55,4 +55,4 @@ done
 sftp -b "$BATCH" -P "$PORT" "${USER}@${SERVER}"
 
 echo "Deploy complete."
-echo "URL: https://wkapp.com/45s/"
+echo "URL: https://wkapp.com/45/"

@@ -18,6 +18,48 @@ use PHPUnit\Framework\TestCase;
 final class GameRuntimeServiceTest extends TestCase
 {
     // =========================================================================
+    // dealNewHand — bidding order
+    // =========================================================================
+
+    public function testDealNewHandSetsBiddingTurnToLeftOfDealer(): void
+    {
+        // Dealer is seat 2; the player to the left (seat 3) must open bidding.
+        $dealerSeat  = 2;
+        $playerCount = 4;
+        $firstBidder = ($dealerSeat + 1) % $playerCount; // 3
+
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('getPlayerCount')->willReturn($playerCount);
+        $repo->method('createHand')->willReturn(99);
+        $repo->method('appendEvent')->willReturn(1);
+
+        $repo->expects($this->once())
+            ->method('setPhaseAndTurn')
+            ->with(10, 'bidding', $firstBidder);
+
+        (new GameRuntimeService($repo))->dealNewHand(10, 1, $dealerSeat);
+    }
+
+    public function testDealNewHandFirstBidderWrapsAroundWhenDealerIsLastSeat(): void
+    {
+        // Dealer is seat 3 (last seat in 4-player); first bidder must be seat 0.
+        $dealerSeat  = 3;
+        $playerCount = 4;
+        $firstBidder = ($dealerSeat + 1) % $playerCount; // 0
+
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('getPlayerCount')->willReturn($playerCount);
+        $repo->method('createHand')->willReturn(99);
+        $repo->method('appendEvent')->willReturn(1);
+
+        $repo->expects($this->once())
+            ->method('setPhaseAndTurn')
+            ->with(10, 'bidding', $firstBidder);
+
+        (new GameRuntimeService($repo))->dealNewHand(10, 2, $dealerSeat);
+    }
+
+    // =========================================================================
     // Guard checks
     // =========================================================================
 
@@ -92,6 +134,7 @@ final class GameRuntimeServiceTest extends TestCase
         $repo->method('bidSummary')->willReturn([
             'count' => 1, 'highest_bid' => 15, 'highest_seat' => 0,
         ]);
+        $repo->method('getPlayerCount')->willReturn(4);
         $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
 
         $repo->expects($this->once())->method('setTurn')->with(12, 1);
@@ -115,16 +158,18 @@ final class GameRuntimeServiceTest extends TestCase
         $repo->method('bidSummary')->willReturn([
             'count' => 4, 'highest_bid' => 25, 'highest_seat' => 2,
         ]);
+        $repo->method('getPlayerCount')->willReturn(4);
         $hand = [
             'id' => 1, 'hand_number' => 1, 'dealer_seat' => 0, 'kitty' => ['2C', '3D', '4H'],
             'bid_winner_seat' => null, 'bid_value' => null,
         ];
         $repo->method('findCurrentHand')->willReturn($hand);
-        $repo->method('getSeatCards')->willReturn(['AC', 'KC', 'QC', 'JC', '10C']);
         $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
 
         $repo->expects($this->once())->method('setPhaseAndTurn')->with(13, 'declare_trump', 2);
         $repo->expects($this->never())->method('setTurn');
+        // Kitty must NOT be merged here — only after trump is declared
+        $repo->expects($this->never())->method('updateSeatCards');
 
         $result = (new GameRuntimeService($repo))
             ->handle(new ActionCommand(13, 3, 'submit_bid', ['bid' => 'pass']));
@@ -144,6 +189,7 @@ final class GameRuntimeServiceTest extends TestCase
         $repo->method('bidSummary')->willReturn([
             'count' => 4, 'highest_bid' => 0, 'highest_seat' => null,
         ]);
+        $repo->method('getPlayerCount')->willReturn(4);
         $hand = [
             'id' => 1, 'hand_number' => 1, 'dealer_seat' => 3, 'kitty' => ['2C', '3D', '4H'],
             'bid_winner_seat' => null, 'bid_value' => null,
@@ -168,6 +214,98 @@ final class GameRuntimeServiceTest extends TestCase
         $this->assertSame('declare_trump', $result->statePatch['phase']);
         // Dealer seat (3) is forced bidder
         $this->assertSame(3, $result->statePatch['current_turn_seat']);
+    }
+
+    public function testDealerCanStealBidByMatchingCurrentHigh(): void
+    {
+        // Dealer is seat 3. Seats 0-2 have bid; seat 1 holds the high at 25.
+        // Dealer bids 25 (matching) — should steal the bid and close bidding.
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 15, 'current_turn_seat' => 3, 'current_phase' => 'bidding',
+            'dealer_seat' => 3,
+        ]);
+        // Pre-transaction validation call: current high is 25 held by seat 1.
+        // In-transaction call: after appending dealer's 25, dealer now holds highest (>= match).
+        $repo->method('bidSummary')->willReturnOnConsecutiveCalls(
+            ['count' => 3, 'highest_bid' => 25, 'highest_seat' => 1],
+            ['count' => 4, 'highest_bid' => 25, 'highest_seat' => 3]
+        );
+        $repo->method('getPlayerCount')->willReturn(4);
+        $hand = [
+            'id' => 5, 'hand_number' => 1, 'dealer_seat' => 3, 'kitty' => ['2C', '3D', '4H'],
+            'bid_winner_seat' => null, 'bid_value' => null,
+        ];
+        $repo->method('findCurrentHand')->willReturn($hand);
+        $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(15, 3, 'submit_bid', ['bid' => 25]));
+
+        $this->assertTrue($result->accepted);
+        $this->assertSame('declare_trump', $result->statePatch['phase']);
+        // Bid winner must be the dealer (seat 3), not seat 1
+        $this->assertSame(3, $result->statePatch['current_turn_seat']);
+    }
+
+    public function testNonDealerBidEqualToCurrentHighIsRejected(): void
+    {
+        // Seat 1 already bid 20. Seat 2 (non-dealer) tries to bid 20 — not allowed.
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 16, 'current_turn_seat' => 2, 'current_phase' => 'bidding',
+            'dealer_seat' => 3,
+        ]);
+        $repo->method('bidSummary')->willReturn([
+            'count' => 1, 'highest_bid' => 20, 'highest_seat' => 1,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(4);
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(16, 2, 'submit_bid', ['bid' => 20]));
+
+        $this->assertFalse($result->accepted);
+        $this->assertSame('bid_too_low', $result->code);
+    }
+
+    public function testNonDealerBidBelowCurrentHighIsRejected(): void
+    {
+        // Seat 1 bid 25. Seat 2 tries to bid 20 — must be higher than 25.
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 17, 'current_turn_seat' => 2, 'current_phase' => 'bidding',
+            'dealer_seat' => 3,
+        ]);
+        $repo->method('bidSummary')->willReturn([
+            'count' => 1, 'highest_bid' => 25, 'highest_seat' => 1,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(4);
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(17, 2, 'submit_bid', ['bid' => 20]));
+
+        $this->assertFalse($result->accepted);
+        $this->assertSame('bid_too_low', $result->code);
+    }
+
+    public function testDealerBidBelowCurrentHighIsRejected(): void
+    {
+        // Seat 1 bid 25. Dealer (seat 3) tries to bid 20 — must match at minimum.
+        $repo = $this->createMock(GameRepository::class);
+        $repo->method('findGameState')->willReturn([
+            'id' => 18, 'current_turn_seat' => 3, 'current_phase' => 'bidding',
+            'dealer_seat' => 3,
+        ]);
+        $repo->method('bidSummary')->willReturn([
+            'count' => 3, 'highest_bid' => 25, 'highest_seat' => 1,
+        ]);
+        $repo->method('getPlayerCount')->willReturn(4);
+
+        $result = (new GameRuntimeService($repo))
+            ->handle(new ActionCommand(18, 3, 'submit_bid', ['bid' => 20]));
+
+        $this->assertFalse($result->accepted);
+        $this->assertSame('bid_too_low', $result->code);
     }
 
     // =========================================================================
@@ -213,8 +351,19 @@ final class GameRuntimeServiceTest extends TestCase
             'id' => 32, 'current_turn_seat' => 2, 'current_phase' => 'declare_trump',
             'dealer_seat' => 0,
         ]);
-        $repo->method('findCurrentHand')->willReturn(['id' => 5, 'trump_suit' => null]);
+        $repo->method('findCurrentHand')->willReturn([
+            'id' => 5, 'trump_suit' => null,
+            'bid_winner_seat' => 2, 'kitty' => ['2C', '3D', '4H'],
+        ]);
+        $repo->method('getSeatCards')->willReturn(['AC', 'KC', 'QC', 'JC', '10C']);
         $repo->method('withTransaction')->willReturnCallback(static fn(callable $cb) => $cb());
+
+        $appendedTypes = [];
+        $repo->method('appendEvent')
+            ->willReturnCallback(function (int $gid, string $type) use (&$appendedTypes): int {
+                $appendedTypes[] = $type;
+                return 1;
+            });
 
         $repo->expects($this->once())->method('setHandTrump')->with(5, 'S');
         $repo->expects($this->once())->method('setPhaseAndTurn')->with(32, 'discard_phase', 2);
@@ -224,6 +373,7 @@ final class GameRuntimeServiceTest extends TestCase
 
         $this->assertTrue($result->accepted);
         $this->assertSame('discard_phase', $result->statePatch['phase']);
+        $this->assertContains('kitty_picked_up', $appendedTypes);
     }
 
     // =========================================================================

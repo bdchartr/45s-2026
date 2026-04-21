@@ -6,6 +6,8 @@ namespace FortyFives\Application\Services;
 
 use FortyFives\Application\Contracts\ActionCommand;
 use FortyFives\Application\Contracts\ActionResult;
+use FortyFives\Domain\AI\AIRequest;
+use FortyFives\Domain\AI\MoveProviderInterface;
 use FortyFives\Domain\Game\Card;
 use FortyFives\Domain\Rules\CardRanker;
 use FortyFives\Domain\Rules\LegalMoveValidator;
@@ -78,17 +80,40 @@ final class GameRuntimeService
             return ActionResult::rejected('invalid_bid', 'Bid must be pass or one of 15,20,25,30,60.');
         }
 
-        $gameId = (int) $state['id'];
-        return $this->games->withTransaction(function () use ($gameId, $command, $bid, $isPass, $state): ActionResult {
+        $gameId      = (int) $state['id'];
+        $dealerSeat  = (int) ($state['dealer_seat'] ?? 0);
+        $isDealer    = $command->seat === $dealerSeat;
+        $playerCount = $this->games->getPlayerCount($gameId);
+
+        // Validate bid amount against the current standing high bid.
+        // Non-dealer must strictly exceed it; dealer may match to steal.
+        if (!$isPass) {
+            $preSummary  = $this->games->bidSummary($gameId);
+            $currentHigh = (int) ($preSummary['highest_bid'] ?? 0);
+            if ($currentHigh > 0) {
+                if ($isDealer && $bid < $currentHigh) {
+                    return ActionResult::rejected(
+                        'bid_too_low',
+                        'Dealer must match or exceed the current bid of ' . $currentHigh . ' to steal it.'
+                    );
+                }
+                if (!$isDealer && $bid <= $currentHigh) {
+                    return ActionResult::rejected(
+                        'bid_too_low',
+                        'Bid must exceed the current highest bid of ' . $currentHigh . '.'
+                    );
+                }
+            }
+        }
+
+        return $this->games->withTransaction(function () use ($gameId, $command, $bid, $isPass, $state, $dealerSeat, $playerCount): ActionResult {
             $this->games->appendEvent($gameId, 'bid_action', $command->seat, [
                 'bid' => $isPass ? 'pass' : $bid,
                 'at'  => gmdate('c'),
             ]);
 
-            $summary    = $this->games->bidSummary($gameId);
-            $dealerSeat = (int) ($state['dealer_seat'] ?? 0);
-            $playerCount = 4;
-            $nextSeat    = ($command->seat + 1) % $playerCount;
+            $summary  = $this->games->bidSummary($gameId);
+            $nextSeat = ($command->seat + 1) % $playerCount;
 
             if ((int) $summary['count'] >= $playerCount) {
                 return $this->closeBidding($gameId, $state, $summary, $dealerSeat);
@@ -129,18 +154,8 @@ final class GameRuntimeService
             'at'           => gmdate('c'),
         ]);
 
-        // Bid winner gets the kitty — emit event then transition to trump declaration
-        if ($hand !== null) {
-            $this->games->appendEvent($gameId, 'kitty_picked_up', (int) $winnerSeat, [
-                'winner_seat' => (int) $winnerSeat,
-                'kitty'       => $hand['kitty'],
-                'at'          => gmdate('c'),
-            ]);
-            // Add kitty cards to winner's hand
-            $currentCards = $this->games->getSeatCards((int) $hand['id'], (int) $winnerSeat) ?? [];
-            $merged = array_values(array_unique(array_merge($currentCards, $hand['kitty'])));
-            $this->games->updateSeatCards((int) $hand['id'], (int) $winnerSeat, $merged);
-        }
+        // Kitty is NOT given to the winner yet — they declare trump first, then receive
+        // the kitty face-up (only visible to them).  See handleDeclareTrump().
 
         // Transition to declare_trump — only the bid winner acts
         $this->games->setPhaseAndTurn($gameId, 'declare_trump', (int) $winnerSeat);
@@ -179,6 +194,22 @@ final class GameRuntimeService
                 'trump_suit' => $trump,
                 'at'         => gmdate('c'),
             ]);
+
+            // Now give the kitty to the bid winner (face-up, only visible to them).
+            $bidWinnerSeat = isset($hand['bid_winner_seat']) ? (int) $hand['bid_winner_seat'] : null;
+            if ($bidWinnerSeat !== null && !empty($hand['kitty'])) {
+                $kitty = is_string($hand['kitty']) ? json_decode($hand['kitty'], true) : $hand['kitty'];
+                if (!empty($kitty)) {
+                    $this->games->appendEvent($gameId, 'kitty_picked_up', $bidWinnerSeat, [
+                        'winner_seat' => $bidWinnerSeat,
+                        'kitty'       => $kitty,
+                        'at'          => gmdate('c'),
+                    ]);
+                    $currentCards = $this->games->getSeatCards((int) $hand['id'], $bidWinnerSeat) ?? [];
+                    $merged = array_values(array_unique(array_merge($currentCards, $kitty)));
+                    $this->games->updateSeatCards((int) $hand['id'], $bidWinnerSeat, $merged);
+                }
+            }
 
             // Transition to discard_phase — all seats discard simultaneously (no strict turn order).
             // We set turn to the bid winner as a reference; discard_cards checks phase, not turn.
@@ -732,6 +763,144 @@ final class GameRuntimeService
     }
 
     // =========================================================================
+    // AI turn runner
+    // =========================================================================
+
+    /**
+     * Advance the game for any AI seats whose turn it currently is.
+     * Loops until the current-turn seat belongs to a human, the phase is not
+     * an actionable phase, or the safety limit is reached.
+     *
+     * Discard phase is handled separately: all AI seats that have not yet
+     * discarded this hand are prompted to do so (simultaneous phase).
+     */
+    public function runAiTurns(int $gameId, MoveProviderInterface $ai, int $maxIter = 24): void
+    {
+        for ($i = 0; $i < $maxIter; $i++) {
+            $state = $this->games->findGameState($gameId);
+            if ($state === null) {
+                return;
+            }
+
+            $phase = (string) ($state['current_phase'] ?? '');
+            if (!in_array($phase, ['bidding', 'declare_trump', 'discard_phase', 'trick_play'], true)) {
+                return;
+            }
+
+            $aiSeats = $this->games->getAiSeats($gameId);
+            if (empty($aiSeats)) {
+                return;
+            }
+
+            if ($phase === 'discard_phase') {
+                if (!$this->runOneAiDiscard($gameId, $state, $aiSeats, $ai)) {
+                    return; // no AI seat needs to discard right now
+                }
+            } else {
+                $turnSeat = (int) ($state['current_turn_seat'] ?? -1);
+                if (!in_array($turnSeat, $aiSeats, true)) {
+                    return; // human's turn
+                }
+                $ctx     = $this->buildAiContext($gameId, $state, $turnSeat);
+                $request = new AIRequest($gameId, $turnSeat, $phase, $ctx, []);
+                $resp    = $ai->choose($request);
+                $cmd     = new ActionCommand($gameId, $turnSeat, $resp->actionType, $resp->payload);
+                $result  = $this->handle($cmd);
+                if (!$result->accepted) {
+                    return; // AI produced an illegal move — stop to avoid infinite loop
+                }
+                // Limit trick_play to one AI card per poll so the UI can animate each card.
+                if ($phase === 'trick_play') {
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Find the first AI seat that has not yet submitted a discard this hand
+     * and dispatch its discard action.  Returns true if a discard was sent.
+     */
+    private function runOneAiDiscard(int $gameId, array $state, array $aiSeats, MoveProviderInterface $ai): bool
+    {
+        // Determine which seats have already discarded since trump was declared.
+        $trumpEvent = $this->games->latestEventByType($gameId, 'trump_declared');
+        $afterSeq   = $trumpEvent !== null ? (int) $trumpEvent['seq_no'] : 0;
+        $events     = $this->games->listEventsAfter($gameId, $afterSeq, 40);
+
+        $discardedSeats = [];
+        foreach ($events as $e) {
+            if ($e['event_type'] === 'discard_action') {
+                $discardedSeats[(int) $e['actor_seat']] = true;
+            }
+        }
+
+        // Also handle the dealer-extra-draw step: check dealer_extra_draw_pending.
+        $hand             = $this->games->findCurrentHand($gameId);
+        $dealerExtraDraw  = $hand !== null && (bool) ($hand['dealer_extra_draw_pending'] ?? false);
+        $dealerSeat       = (int) ($state['dealer_seat'] ?? -1);
+
+        foreach ($aiSeats as $seat) {
+            if ($dealerExtraDraw) {
+                // Only the dealer acts in the extra-draw step.
+                if ($seat !== $dealerSeat) {
+                    continue;
+                }
+            } elseif (isset($discardedSeats[$seat])) {
+                continue; // already discarded
+            }
+
+            $ctx     = $this->buildAiContext($gameId, $state, $seat);
+            $request = new AIRequest($gameId, $seat, 'discard_phase', $ctx, []);
+            $resp    = $ai->choose($request);
+            $cmd     = new ActionCommand($gameId, $seat, $resp->actionType, $resp->payload);
+            $this->handle($cmd);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Assemble the state context that the AI needs to make its decision.
+     */
+    private function buildAiContext(int $gameId, array $gameState, int $seat): array
+    {
+        $hand  = $this->games->findCurrentHand($gameId);
+        $cards = $hand !== null ? ($this->games->getSeatCards((int) $hand['id'], $seat) ?? []) : [];
+        $trump = (string) ($hand['trump_suit'] ?? '');
+
+        $ctx = [
+            'hand_cards'   => $cards,
+            'trump_suit'   => $trump,
+            'dealer_seat'  => (int) ($gameState['dealer_seat'] ?? 0),
+            'is_bid_winner' => $hand !== null && (int) ($hand['bid_winner_seat'] ?? -1) === $seat,
+        ];
+
+        $phase = (string) ($gameState['current_phase'] ?? '');
+
+        if ($phase === 'bidding') {
+            $summary             = $this->games->bidSummary($gameId);
+            $ctx['highest_bid']  = (int) ($summary['highest_bid'] ?? 0);
+        }
+
+        if ($phase === 'trick_play' && $hand !== null) {
+            $trick = $this->games->findCurrentTrick((int) $hand['id']);
+            if ($trick !== null) {
+                $played           = $trick['cards'] ?? [];
+                $leadCardCode     = !empty($played) ? (string) $played[0]['card'] : null;
+                $leadSuit         = $leadCardCode !== null
+                    ? strtoupper(substr($leadCardCode, -1))
+                    : null;
+                $ctx['lead_suit'] = $leadSuit;
+                $ctx['lead_card'] = $leadCardCode;
+            }
+        }
+
+        return $ctx;
+    }
+
+    // =========================================================================
     // Hand dealing (also called from lobby/create_game when game starts)
     // =========================================================================
 
@@ -771,9 +940,14 @@ final class GameRuntimeService
             $this->games->setDeckRemaining($handId, $deckRemaining);
         }
 
+        // Set bidding turn to the player left of the dealer (dealer bids last).
+        $firstBidder = ($dealerSeat + 1) % $playerCount;
+        $this->games->setPhaseAndTurn($gameId, 'bidding', $firstBidder);
+
         $this->games->appendEvent($gameId, 'hand_dealt', null, [
             'hand_number'  => $handNumber,
             'dealer_seat'  => $dealerSeat,
+            'first_bidder' => $firstBidder,
             'player_count' => $playerCount,
             'at'           => gmdate('c'),
         ]);

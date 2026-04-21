@@ -3,103 +3,561 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>45s Lobby</title>
+  <title>45</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=Chivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap');
+    /* ── Reset & Variables ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-1: #f2efe8;
-      --bg-2: #e7ddd0;
-      --paper: #fffdf8;
-      --ink: #1d2126;
-      --muted: #5c6670;
-      --line: #d0c6b8;
-      --brand: #0d6f66;
+      /* Game board palette */
+      --felt:       #1a3328;
+      --felt-2:     #0f2318;
+      --felt-mid:   #224433;
+      --gold:       #c9a84c;
+      --gold-lt:    #f0d080;
+      --gold-dim:   #8a6f30;
+      /* Lobby palette */
+      --bg-1:       #f2efe8;
+      --bg-2:       #e7ddd0;
+      --paper:      #fffdf8;
+      --ink:        #1d2126;
+      --muted:      #5c6670;
+      --line:       #d0c6b8;
+      --brand:      #0d6f66;
       --brand-dark: #0a5952;
-      --accent: #d97a22;
-      --good: #1f8a47;
-      --warn: #c55a11;
-      --bad: #a32121;
-      --shadow: 0 16px 40px rgba(38, 33, 21, 0.14);
+      --brand-bg:   #e8f5f3;
+      --accent:     #d97a22;
+      --accent-dark:#b8621a;
+      --accent-bg:  #fdf3e8;
+      --good:       #1f8a47;
+      --bad:        #a32121;
+      --shadow:     0 16px 40px rgba(38,33,21,0.14);
+      --shadow-sm:  0 4px 12px rgba(38,33,21,0.10);
     }
 
-    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { font-family: 'Chivo', 'Avenir Next', 'Segoe UI', sans-serif; color: var(--ink); }
 
-    body {
-      margin: 0;
-      font-family: 'Chivo', 'Avenir Next', 'Segoe UI', sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 12% 6%, rgba(217, 122, 34, 0.2), transparent 34%),
-        radial-gradient(circle at 88% 16%, rgba(13, 111, 102, 0.2), transparent 30%),
-        linear-gradient(165deg, var(--bg-1), var(--bg-2));
+    /* ═══════════════════════════════════════════════════════════════════
+       WELCOME VIEW
+    ═══════════════════════════════════════════════════════════════════ */
+
+    #welcomeView {
       min-height: 100vh;
+      background:
+        radial-gradient(ellipse at 20% 110%, rgba(201,168,76,0.12) 0%, transparent 55%),
+        radial-gradient(ellipse at 85% -10%, rgba(13,111,102,0.18) 0%, transparent 50%),
+        linear-gradient(160deg, var(--felt) 0%, var(--felt-2) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      position: relative;
+      overflow: hidden;
     }
 
-    .shell {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 18px 16px 26px;
+    /* ── Watermark suits ── */
+    #welcomeView::before {
+      content: '♠ ♥ ♦ ♣';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      font-size: clamp(80px, 18vw, 180px);
+      letter-spacing: 0.4em;
+      color: rgba(201,168,76,0.05);
+      pointer-events: none;
+      white-space: nowrap;
+      user-select: none;
     }
 
-    .hero {
+    .wv-layout {
       display: grid;
-      grid-template-columns: 1.3fr 1fr;
-      gap: 16px;
-      align-items: stretch;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 0;
+      max-width: 980px;
+      width: 100%;
+      min-height: 520px;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 40px 100px rgba(0,0,0,0.55), 0 0 0 1px rgba(201,168,76,0.15);
+      position: relative;
+      z-index: 1;
     }
 
+    /* ── Left: Branding ── */
+    .wv-left {
+      background: rgba(255,255,255,0.03);
+      border-right: 1px solid rgba(201,168,76,0.18);
+      padding: 52px 48px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .wv-eyebrow {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold-dim);
+      margin-bottom: 12px;
+    }
+
+    .wv-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(42px, 6vw, 72px);
+      font-weight: 900;
+      line-height: 0.95;
+      letter-spacing: -0.01em;
+      color: var(--gold-lt);
+      text-shadow: 0 2px 24px rgba(201,168,76,0.3);
+    }
+
+    .wv-subtitle {
+      margin-top: 16px;
+      font-size: 15px;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.55);
+      max-width: 30ch;
+    }
+
+    .wv-features {
+      margin-top: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .wv-feat {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.72);
+      line-height: 1.4;
+    }
+
+    .wv-feat-suit {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: rgba(201,168,76,0.12);
+      border: 1px solid rgba(201,168,76,0.22);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      color: var(--gold);
+    }
+
+    .wv-divider {
+      margin-top: auto;
+      padding-top: 32px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 11px;
+      color: rgba(255,255,255,0.25);
+      letter-spacing: 0.03em;
+    }
+
+    /* ── Right: Auth card ── */
+    .wv-right {
+      background: var(--paper);
+      padding: 44px 40px 40px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .wv-auth-head {
+      margin-bottom: 28px;
+    }
+
+    .wv-auth-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .wv-auth-sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* Tab switcher */
+    .wv-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 28px;
+    }
+
+    .wv-tab {
+      flex: 1;
+      padding: 10px;
+      font: 700 13px 'Chivo', sans-serif;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .wv-tab:hover { background: #f5efe8; color: var(--ink); }
+
+    .wv-tab.active {
+      background: var(--felt);
+      color: var(--gold-lt);
+    }
+
+    .wv-tab-panel { display: none; }
+    .wv-tab-panel.active { display: block; }
+
+    /* Form fields */
+    .wv-field {
+      margin-bottom: 14px;
+    }
+
+    .wv-field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 5px;
+      letter-spacing: 0.02em;
+    }
+
+    .wv-field .opt {
+      font-weight: 400;
+      color: #aaa;
+    }
+
+    .wv-field input {
+      width: 100%;
+      border-radius: 8px;
+      border: 1.5px solid #d5c9b8;
+      padding: 11px 12px;
+      font: inherit;
+      font-size: 14px;
+      color: var(--ink);
+      background: white;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      outline: none;
+    }
+
+    .wv-field input:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(13,111,102,0.12);
+    }
+
+    .wv-field .field-hint {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 4px;
+    }
+
+    .wv-btn {
+      width: 100%;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font: 700 15px 'Chivo', sans-serif;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.08s, box-shadow 0.15s;
+      margin-top: 4px;
+    }
+
+    .wv-btn:active { transform: translateY(1px); }
+
+    .wv-btn-primary {
+      background: var(--felt);
+      color: var(--gold-lt);
+      box-shadow: 0 4px 16px rgba(15,35,24,0.3);
+    }
+
+    .wv-btn-primary:hover {
+      background: var(--felt-mid);
+      box-shadow: 0 6px 20px rgba(15,35,24,0.4);
+    }
+
+    .wv-btn-accent {
+      background: var(--brand);
+      color: white;
+      box-shadow: 0 4px 16px rgba(13,111,102,0.25);
+    }
+
+    .wv-btn-accent:hover {
+      background: var(--brand-dark);
+    }
+
+    .wv-status {
+      min-height: 20px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 12px;
+      text-align: center;
+      word-break: break-word;
+    }
+
+    .wv-status.error   { color: var(--bad); }
+    .wv-status.success { color: var(--good); }
+
+    .wv-welcome-msg {
+      display: none;
+      background: var(--brand-bg);
+      border: 1px solid #b2d8d2;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--brand-dark);
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    /* ── Social auth ── */
+    .social-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 20px 0 14px;
+      color: #bbb;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .social-divider::before,
+    .social-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2d9ca;
+    }
+
+    .social-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Container for Google's rendered iframe button */
+    .social-btn-wrap {
+      height: 42px;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Custom buttons for Facebook / Apple */
+    .social-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: none;
+      font: 600 13px 'Chivo', sans-serif;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.08s;
+      color: white;
+    }
+
+    .social-btn:hover  { filter: brightness(1.1); }
+    .social-btn:active { transform: translateY(1px); }
+
+    .fb-btn    { background: #1877F2; }
+    .apple-btn { background: #000; }
+
+    /* ── Mobile welcome ── */
+    @media (max-width: 700px) {
+      .wv-layout {
+        grid-template-columns: 1fr;
+        border-radius: 16px;
+        min-height: auto;
+      }
+      .wv-left { padding: 32px 28px 28px; }
+      .wv-right { padding: 28px; }
+      .wv-left { order: 2; }
+      .wv-right { order: 1; }
+      .wv-title { font-size: 36px; }
+      .wv-features { margin-top: 24px; }
+      .wv-divider { display: none; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       LOBBY VIEW
+    ═══════════════════════════════════════════════════════════════════ */
+
+    #lobbyView {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% 6%, rgba(217,122,34,0.18), transparent 34%),
+        radial-gradient(circle at 88% 16%, rgba(13,111,102,0.18), transparent 30%),
+        linear-gradient(165deg, var(--bg-1), var(--bg-2));
+    }
+
+    /* ── Topbar ── */
+    .lv-topbar {
+      background: var(--felt);
+      padding: 0 20px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .lv-brand {
+      font-family: 'Playfair Display', serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--gold-lt);
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+
+    .lv-user-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #currentUserInfo {
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+    }
+
+    .lv-username {
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--gold-lt);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      text-decoration-color: rgba(240,208,128,0.4);
+      transition: text-decoration-color 0.15s;
+    }
+
+    .lv-username:hover { text-decoration-color: var(--gold-lt); }
+
+    .lv-role {
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      font-weight: 400;
+    }
+
+    .lv-signout {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.18);
+      color: rgba(255,255,255,0.7);
+      font: 600 12px 'Chivo', sans-serif;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+      width: auto;
+    }
+
+    .lv-signout:hover {
+      background: rgba(255,255,255,0.18);
+      color: white;
+    }
+
+    .lv-status-bar {
+      background: rgba(163,33,33,0.08);
+      border-bottom: 1px solid rgba(163,33,33,0.15);
+      padding: 6px 20px;
+      font-size: 12px;
+      color: var(--bad);
+      display: none;
+    }
+
+    .lv-status-bar.visible { display: block; }
+
+    /* ── Lobby shell ── */
+    .lv-shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px 16px 48px;
+    }
+
+    .lv-main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .lv-sidebar { display: grid; gap: 14px; }
+
+    /* ── Panel / card base ── */
     .panel {
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 16px;
       box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    /* ── Create Game card ── */
+    .create-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow-sm);
       padding: 16px;
     }
 
-    .title {
-      font-size: clamp(28px, 6vw, 42px);
+    .create-card h3 {
       margin: 0;
-      line-height: 1;
-      letter-spacing: -0.02em;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
     }
 
-    .subtitle {
-      margin: 12px 0 16px;
-      color: var(--muted);
-      max-width: 62ch;
-      line-height: 1.5;
-    }
+    .create-card .fields { display: grid; gap: 10px; margin-top: 12px; }
 
-    .hero-strip {
+    .create-header {
       display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .chip {
-      display: inline-flex;
       align-items: center;
-      gap: 6px;
-      border-radius: 999px;
+      justify-content: space-between;
+    }
+
+    .pct-toggle {
+      display: flex;
       border: 1px solid var(--line);
-      background: #f5efe5;
-      color: #4f4a43;
-      font-size: 12px;
-      padding: 6px 10px;
+      border-radius: 6px;
+      overflow: hidden;
     }
 
-    .auth-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
+    .pct-btn {
+      width: auto;
+      border: none;
+      border-radius: 0;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
     }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
+    .pct-btn:hover { background: #f0ebe3; color: var(--ink); }
+    .pct-btn.active { background: var(--brand); color: white; }
 
     label {
       display: block;
@@ -108,633 +566,1516 @@
       margin-bottom: 3px;
     }
 
-    input, select, button {
+    input, select {
       width: 100%;
-      border-radius: 10px;
+      border-radius: 8px;
       border: 1px solid #c5baa8;
-      padding: 10px;
+      padding: 9px 10px;
       font: inherit;
+      font-size: 13px;
       color: var(--ink);
       background: white;
     }
 
     button {
+      width: 100%;
+      border-radius: 8px;
       border: none;
-      background: var(--brand);
-      color: white;
+      padding: 10px;
+      font: inherit;
       font-weight: 700;
       cursor: pointer;
-      transition: transform 0.08s ease, background 0.2s ease;
+      transition: background 0.15s, transform 0.08s;
+      color: white;
+      background: var(--brand);
     }
 
     button:hover { background: var(--brand-dark); }
     button:active { transform: translateY(1px); }
     button.secondary { background: #4f5b66; }
+    button.secondary:hover { background: #3d4852; }
     button.accent { background: var(--accent); }
+    button.accent:hover { background: var(--accent-dark); }
+    button.sm { padding: 6px 12px; font-size: 12px; width: auto; }
+    button.danger { background: #9b2c2c; }
+    button.danger:hover { background: #c53030; }
 
-    .welcome {
-      margin-top: 10px;
-      border: 1px dashed #b9d8cc;
-      background: #f0fbf7;
-      border-radius: 12px;
-      padding: 10px;
-      color: #1b6847;
-      font-size: 14px;
-      display: none;
+    .hidden { display: none; }
+    .mt-8 { margin-top: 8px; }
+
+    /* Seat grid */
+    .seats-grid { display: grid; gap: 6px; }
+
+    .seat-row {
+      background: #faf8f4;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 10px;
     }
 
-    .account-card {
-      margin-top: 8px;
-      border: 1px solid #cfe0d7;
-      background: #f2faf6;
-      border-radius: 12px;
-      padding: 10px;
-      display: none;
+    .seat-row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
     }
 
-    .account-title {
-      font-weight: 700;
-      font-size: 14px;
-      margin-bottom: 4px;
-      color: #1b6847;
-    }
+    .seat-info { display: flex; align-items: center; gap: 6px; min-width: 0; }
 
-    .account-meta {
-      font-size: 12px;
-      color: #2f5140;
-      margin-bottom: 8px;
-    }
-
-    .status {
-      margin-top: 8px;
-      min-height: 20px;
-      font-size: 13px;
+    .seat-num {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      background: #e8e2d8;
       color: var(--muted);
-      word-break: break-word;
+      border-radius: 4px;
+      padding: 2px 5px;
+      flex-shrink: 0;
     }
 
-    .status.error { color: var(--bad); }
+    .seat-name { font-size: 12px; font-weight: 700; color: var(--brand); }
+
+    .team-tag {
+      font-size: 10px;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-weight: 600;
+    }
+
+    .team-a { background: var(--brand-bg); color: var(--brand); }
+    .team-b { background: var(--accent-bg); color: var(--accent-dark); }
+
+    .seat-type-btns {
+      display: flex;
+      border: 1px solid #d0c6b8;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .seat-type-btn {
+      width: auto;
+      border: none;
+      border-radius: 0;
+      border-right: 1px solid #d0c6b8;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      background: transparent;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .seat-type-btn:last-child { border-right: none; }
+    .seat-type-btn:hover { background: #f0ebe3; color: var(--ink); }
+    .seat-type-btn.active { background: var(--ink); color: white; }
+    .seat-type-btn.active-invite { background: var(--accent); color: white; }
+
+    /* Invite picker */
+    .invite-picker { margin-top: 8px; position: relative; }
+
+    .invite-search {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid #c5baa8;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 12px;
+      background: white;
+    }
+
+    .invite-search:focus { outline: none; border-color: var(--brand); }
+
+    .invite-dropdown {
+      position: absolute;
+      left: 0; right: 0;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(38,33,21,0.15);
+      max-height: 180px;
+      overflow-y: auto;
+      z-index: 100;
+      display: none;
+    }
+
+    .invite-section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      padding: 6px 10px 2px;
+    }
+
+    .invite-item {
+      padding: 6px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .invite-item:hover { background: var(--brand-bg); }
+    .invite-item strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .invite-item .invite-email { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .invite-item.recent strong::after { content: ' ★'; font-size: 9px; color: var(--accent); }
+    .invite-empty { padding: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+
+    .invite-selected {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--brand-bg);
+      border: 1px solid #b2d8d2;
+      border-radius: 6px;
+      padding: 5px 8px;
+    }
+
+    .invite-selected-name { font-size: 12px; font-weight: 600; color: var(--brand); }
+
+    .invite-clear {
+      width: auto;
+      background: none;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+
+    .invite-clear:hover { background: none; color: var(--bad); }
+
+    /* ── Status ── */
+    .status { min-height: 18px; font-size: 12px; color: var(--muted); word-break: break-word; }
+    .status.error   { color: var(--bad); }
     .status.success { color: var(--good); }
 
-    .dash {
-      margin-top: 14px;
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
+    /* ── Game sections ── */
+    .game-sections { display: grid; gap: 20px; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .section-count {
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: #e8e2d8;
+      color: var(--muted);
+    }
+
+    .section-count.active { background: var(--brand-bg); color: var(--brand); }
+    .section-count.open   { background: var(--accent-bg); color: var(--accent-dark); }
+
+    /* ── Game cards ── */
+    .game-list { display: grid; gap: 8px; }
+
+    .game-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
       gap: 12px;
     }
 
-    .card {
-      grid-column: span 12;
+    .game-card.active  { border-left-color: var(--brand); }
+    .game-card.open    { border-left-color: var(--accent); }
+    .game-card.invited { border-left-color: #7c3aed; }
+    .game-card.past    { border-left-color: #bbb; opacity: 0.85; }
+
+    .game-card-body { flex: 1; min-width: 0; }
+
+    .game-matchup {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .game-matchup .vs         { color: var(--muted); font-weight: 400; margin: 0 4px; }
+    .game-matchup .you        { color: var(--brand); font-weight: 700; }
+    .game-matchup .open-slot  { color: var(--accent); font-style: italic; }
+
+    .game-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+
+    .badge.active        { background: var(--brand-bg); color: var(--brand); }
+    .badge.lobby         { background: var(--accent-bg); color: var(--accent-dark); }
+    .badge.finished      { background: #ede9e0; color: #666; }
+    .badge.invited-badge { background: #ede9fe; color: #5b21b6; }
+
+    .meta-pill {
+      font-size: 11px;
+      color: var(--muted);
+      background: #f0ebe2;
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+
+    .game-id {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      color: #bbb;
+    }
+
+    .game-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+    .btn-board {
+      display: inline-block;
+      background: var(--brand);
+      color: white;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 7px;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .btn-board:hover { background: var(--brand-dark); }
+
+    .btn-join {
+      background: var(--accent);
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 7px;
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+      width: auto;
+    }
+
+    .btn-join:hover { background: var(--accent-dark); }
+
+    .waiting-label {
+      font-size: 12px;
+      font-style: italic;
+      color: var(--muted);
+    }
+
+    .btn-del {
+      background: none;
+      border: 1px solid #d5c8bc;
+      color: #999;
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: auto;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .btn-del:hover { border-color: #c53030; color: #c53030; background: none; }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      padding: 24px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      background: var(--paper);
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+    }
+
+    /* ── Admin panel ── */
+    .admin-card {
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 14px;
-      box-shadow: var(--shadow);
-      padding: 12px;
+      box-shadow: var(--shadow-sm);
+      padding: 14px;
+      margin-top: 14px;
     }
 
-    .card h3 {
-      margin: 0 0 10px;
-      font-size: 15px;
-      letter-spacing: 0.01em;
-    }
+    .admin-card h3 { margin: 0 0 10px; font-size: 14px; }
 
-    .muted { color: var(--muted); font-size: 12px; }
+    .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #ddd2c3; background: #fff; }
 
-    .mono { font-family: 'IBM Plex Mono', Consolas, monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 480px; }
 
-    .table-wrap {
-      overflow-x: auto;
-      border-radius: 10px;
-      border: 1px solid #ddd2c3;
-      background: #fff;
-    }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #ece4d8; text-align: left; vertical-align: middle; }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 640px;
-      font-size: 13px;
-    }
+    th { background: #f7f2e9; color: #4f4a43; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
 
-    th, td {
-      padding: 9px;
-      border-bottom: 1px solid #ece4d8;
-      text-align: left;
-      vertical-align: middle;
-    }
+    .mono { font-family: 'IBM Plex Mono', monospace; }
 
-    th {
-      background: #f7f2e9;
-      color: #4f4a43;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .invite-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      margin-top: 6px;
-    }
-
-    .hidden { display: none; }
-
-    .divider {
-      border: none;
-      border-top: 1px solid #e2d9ca;
-      margin: 6px 0;
-    }
-
-    .mt-10 { margin-top: 10px; }
-
-    @media (min-width: 920px) {
-      .card.create { grid-column: span 4; }
-      .card.mygames { grid-column: span 8; }
-      .card.joinable { grid-column: span 12; }
-    }
-
+    /* ── Responsive lobby ── */
     @media (max-width: 860px) {
-      .hero { grid-template-columns: 1fr; }
-      .row, .grid-2, .invite-row { grid-template-columns: 1fr; }
+      .lv-main { grid-template-columns: 1fr; }
+      .lv-sidebar { order: 2; }
+      .game-sections { order: 1; }
+    }
+
+    @media (max-width: 540px) {
+      .game-card { flex-direction: column; align-items: flex-start; }
+      .game-actions { width: 100%; }
+      .lv-topbar { padding: 0 12px; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <section class="hero">
-      <article class="panel">
-        <h1 class="title">Forty-Fives Lobby</h1>
-        <p class="subtitle">Sign in, create games, invite specific players by seat, or open your table to anyone. You can be active in multiple games at once and jump between them from one dashboard.</p>
-        <div class="hero-strip">
-          <span class="chip">Invite by Seat</span>
-          <span class="chip">Open Match</span>
-          <span class="chip">Multi-Game Ready</span>
-          <span class="chip">Session + CSRF Protected</span>
-        </div>
-      </article>
 
-      <aside class="panel">
-        <div class="auth-grid">
-          <div id="authSignedOut">
-          <div class="row">
-            <div>
-              <label for="loginUsername">Username</label>
-              <input id="loginUsername" value="chartb" autocomplete="username">
-            </div>
-            <div>
-              <label for="loginPassword">Password</label>
-              <input id="loginPassword" type="password" autocomplete="current-password">
-            </div>
-          </div>
-          <div class="row">
-            <button onclick="loginLocal()">Sign In</button>
-            <button class="secondary" onclick="logoutUser()">Sign Out</button>
-          </div>
+  <!-- ═══════════════════════════════════════════════════════════
+       WELCOME VIEW — shown to unauthenticated visitors
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="welcomeView">
+    <div class="wv-layout">
 
-          <hr class="divider">
-
-          <div class="row">
-            <div>
-              <label for="registerUsername">New Username</label>
-              <input id="registerUsername" placeholder="new_player">
-            </div>
-            <div>
-              <label for="registerEmail">Email (optional)</label>
-              <input id="registerEmail" placeholder="new_player@45s.local">
-            </div>
-          </div>
-          <div>
-            <label for="registerPassword">New Password</label>
-            <input id="registerPassword" type="password" placeholder="8+ characters">
-          </div>
-          <button class="accent" onclick="registerUser()">Create Account</button>
-
-          </div>
-
-          <div id="authSignedIn" class="account-card">
-            <div class="account-title">Signed In</div>
-            <div class="account-meta" id="currentUserInfo"></div>
-            <button class="secondary" onclick="logoutUser()">Sign Out</button>
-          </div>
-
-          <div id="welcome" class="welcome"></div>
-          <div id="authStatus" class="status"></div>
-          <div class="mono muted" id="authMeta">Not authenticated</div>
-        </div>
-      </aside>
-    </section>
-
-    <section class="dash">
-      <article class="card create">
-        <h3>Create Game</h3>
-        <div class="grid-2">
-          <div>
-            <label for="targetScore">Target Score</label>
-            <select id="targetScore">
-              <option value="120">120</option>
-              <option value="45">45</option>
-            </select>
-          </div>
-          <div>
-            <label for="inviteMode">Invite Mode</label>
-            <select id="inviteMode" onchange="toggleInviteMode()">
-              <option value="open">open</option>
-              <option value="specific">specific</option>
-            </select>
-          </div>
-        </div>
-
+      <!-- Left: Branding & game context -->
+      <div class="wv-left">
         <div>
-          <label for="aiSeats">AI Seats (comma list from 0..3)</label>
-          <input id="aiSeats" value="2" placeholder="e.g. 2">
+          <div class="wv-eyebrow">Chartrand Family Edition</div>
+          <h1 class="wv-title">45</h1>
+          <p class="wv-subtitle">The classic trick-taking card game of Atlantic Canada — played in teams.</p>
         </div>
 
-        <div id="specificInvites" class="hidden">
-          <label>Seat Invites (user IDs)</label>
-          <div class="invite-row">
-            <input id="inviteSeat1" value="2" placeholder="Seat 1 user_id">
-            <input id="inviteSeat3" value="4" placeholder="Seat 3 user_id">
+        <div class="wv-features">
+          <div class="wv-feat">
+            <span class="wv-feat-suit">♠</span>
+            <span>Trick-taking game — 5 tricks per hand, bid to set the contract</span>
+          </div>
+          <div class="wv-feat">
+            <span class="wv-feat-suit">♥</span>
+            <span>Teams of two — partners sit across the table from each other</span>
+          </div>
+          <div class="wv-feat">
+            <span class="wv-feat-suit">♦</span>
+            <span>Play against friends, invite anyone, or fill seats with AI players</span>
           </div>
         </div>
 
-        <button class="mt-10" onclick="createGame()">Create Game</button>
-        <div id="createStatus" class="status"></div>
-      </article>
-
-      <article class="card mygames">
-        <h3>My Games</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Game</th>
-                <th>Status</th>
-                <th>Ruleset</th>
-                <th>Target</th>
-                <th>Phase</th>
-                <th>Board</th>
-              </tr>
-            </thead>
-            <tbody id="myGamesBody"></tbody>
-          </table>
+        <div class="wv-divider">
+          45 · Chartrand/Newfoundland variant
         </div>
-      </article>
+      </div>
 
-      <article class="card joinable">
-        <h3>Joinable Games</h3>
-        <p class="muted">Shows games where you are invited or where open human seats are available.</p>
+      <!-- Right: Auth -->
+      <div class="wv-right">
+        <div class="wv-auth-head">
+          <div class="wv-auth-title">Welcome to the table</div>
+          <div class="wv-auth-sub">Sign in or create a free account to play.</div>
+        </div>
+
+        <div class="wv-tabs">
+          <button class="wv-tab active" id="tabBtnSignin" onclick="showAuthTab('signin')">Sign In</button>
+          <button class="wv-tab" id="tabBtnJoin" onclick="showAuthTab('join')">New Player</button>
+        </div>
+
+        <!-- Sign In Panel -->
+        <div id="tabSignin" class="wv-tab-panel active">
+          <div class="wv-field">
+            <label for="loginUsername">Username</label>
+            <input id="loginUsername" type="text" autocomplete="username" placeholder="your username"
+                   onkeydown="if(event.key==='Enter') loginLocal()">
+          </div>
+          <div class="wv-field">
+            <label for="loginPassword">Password</label>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••"
+                   onkeydown="if(event.key==='Enter') loginLocal()">
+          </div>
+          <button class="wv-btn wv-btn-primary" onclick="loginLocal()">Sign In</button>
+        </div>
+
+        <!-- New Player Panel -->
+        <div id="tabJoin" class="wv-tab-panel">
+          <div class="wv-field">
+            <label for="registerUsername">Choose a username</label>
+            <input id="registerUsername" type="text" autocomplete="username" placeholder="e.g. card_shark"
+                   onkeydown="if(event.key==='Enter') registerUser()">
+            <div class="field-hint">This is how other players will see you.</div>
+          </div>
+          <div class="wv-field">
+            <label for="registerPassword">Pick a password <span class="opt">(8+ characters)</span></label>
+            <input id="registerPassword" type="password" autocomplete="new-password" placeholder="••••••••"
+                   onkeydown="if(event.key==='Enter') registerUser()">
+          </div>
+          <div class="wv-field">
+            <label for="registerEmail">Email <span class="opt">(optional — for account recovery)</span></label>
+            <input id="registerEmail" type="email" autocomplete="email" placeholder="you@example.com">
+          </div>
+          <button class="wv-btn wv-btn-accent" onclick="registerUser()">Join the Table</button>
+        </div>
+
+        <!-- Social auth — shown below both tabs when providers are configured -->
+        <div id="socialSection" style="display:none">
+          <div class="social-divider"><span>or continue with</span></div>
+          <div class="social-btns">
+            <!-- Google: rendered by GIS SDK into this container -->
+            <div id="google-btn-wrap" style="display:none" class="social-btn-wrap" title="Sign in with Google"></div>
+            <button id="facebook-btn" style="display:none" class="social-btn fb-btn" onclick="socialFacebook()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.025 1.791-4.697 4.533-4.697 1.312 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.884v2.267h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/></svg>
+              <span>Facebook</span>
+            </button>
+            <button id="apple-btn" style="display:none" class="social-btn apple-btn" onclick="socialApple()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.701"/></svg>
+              <span>Apple</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="welcomeStatus" class="wv-status"></div>
+        <div id="welcome" class="wv-welcome-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LOBBY VIEW — shown to authenticated users
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="lobbyView" style="display:none">
+
+    <!-- Topbar -->
+    <header class="lv-topbar">
+      <div class="lv-brand">45</div>
+      <div class="lv-user-area">
+        <div id="authSignedIn">
+          <span id="currentUserInfo"></span>
+        </div>
+        <button class="lv-signout" onclick="logoutUser()">Sign Out</button>
+      </div>
+    </header>
+
+    <!-- Status bar for lobby-level errors -->
+    <div id="lobbyStatusBar" class="lv-status-bar"></div>
+
+    <!-- Main content -->
+    <div class="lv-shell">
+      <div class="lv-main">
+
+        <!-- Sidebar: Create Game -->
+        <aside class="lv-sidebar">
+          <div class="create-card">
+            <div class="create-header">
+              <h3>New Game</h3>
+              <div class="pct-toggle">
+                <button class="pct-btn active" data-count="4" onclick="setPlayerCount(4)">4P</button>
+                <button class="pct-btn" data-count="6" onclick="setPlayerCount(6)">6P</button>
+              </div>
+            </div>
+            <div class="fields">
+              <div>
+                <label for="targetScore">First to</label>
+                <select id="targetScore">
+                  <option value="120">120 points</option>
+                  <option value="45">45 points</option>
+                </select>
+              </div>
+              <div class="seats-grid" id="seatsGrid">
+                <div class="seat-row">
+                  <div class="seat-row-top">
+                    <div class="seat-info">
+                      <span class="seat-num">0</span>
+                      <span class="seat-name">You</span>
+                    </div>
+                    <span class="team-tag team-a">your team</span>
+                  </div>
+                </div>
+                <!-- Seats 1–N rendered by JS -->
+              </div>
+              <button onclick="createGame()">Start Game</button>
+              <div id="createStatus" class="status"></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Game sections -->
+        <div class="game-sections">
+
+          <!-- Active (in-progress) games -->
+          <div class="game-section" id="activeSection">
+            <div class="section-header">
+              <span class="section-title">Active Games</span>
+              <span class="section-count active" id="activeCount">0</span>
+            </div>
+            <div class="game-list" id="activeList"></div>
+          </div>
+
+          <!-- Open tables -->
+          <div class="game-section" id="openSection">
+            <div class="section-header">
+              <span class="section-title">Open Tables</span>
+              <span class="section-count open" id="openCount">0</span>
+            </div>
+            <div class="game-list" id="openList"></div>
+          </div>
+
+          <!-- Past (finished) games -->
+          <div class="game-section" id="pastSection" style="display:none">
+            <div class="section-header">
+              <span class="section-title">Past Games</span>
+              <span class="section-count" id="pastCount">0</span>
+            </div>
+            <div class="game-list" id="pastList"></div>
+          </div>
+
+        </div><!-- /game-sections -->
+      </div><!-- /lv-main -->
+
+      <!-- Admin panel -->
+      <div class="admin-card" id="adminPanel" style="display:none">
+        <h3>All Games <span style="font-size:0.75em;opacity:0.55">(admin)</span></h3>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Game</th>
                 <th>Status</th>
-                <th>Invited</th>
-                <th>Open Seats</th>
+                <th>Phase</th>
+                <th>Created</th>
                 <th>Action</th>
               </tr>
             </thead>
-            <tbody id="joinableGamesBody"></tbody>
+            <tbody id="allGamesBody"></tbody>
           </table>
         </div>
-      </article>
-    </section>
+        <div id="adminStatus" class="status" style="margin-top:8px"></div>
+      </div>
+
+    </div><!-- /lv-shell -->
   </div>
 
+  <!-- Legacy compat: syncAuthUi still references authSignedOut -->
+  <div id="authSignedOut" style="display:none"></div>
+  <!-- Legacy compat: authStatus referenced by logoutUser -->
+  <div id="authStatus" style="display:none"></div>
+
+  <script src="player-modal.js"></script>
   <script>
     const state = {
       userId: null,
       username: null,
+      displayName: null,
       role: null,
       csrfToken: '',
-      basePath: '/45s',
+      basePath: '/45',
       nextPath: null,
+      lobbyUsers: [],
     };
+
+    window.APP_BASE_PATH  = '/45';
+    window.APP_CSRF_TOKEN = '';
+    window.APP_USER_ID    = null;
 
     function byId(id) { return document.getElementById(id); }
 
     function jsonHeaders(withCsrf = false) {
-      const headers = { 'Content-Type': 'application/json' };
-      if (withCsrf && state.csrfToken) {
-        headers['X-CSRF-Token'] = state.csrfToken;
-      }
-      return headers;
+      const h = { 'Content-Type': 'application/json' };
+      if (withCsrf && state.csrfToken) h['X-CSRF-Token'] = state.csrfToken;
+      return h;
     }
 
     function setStatus(id, text, level = 'muted') {
       const el = byId(id);
+      if (!el) return;
       el.textContent = text;
       el.className = 'status' + (level === 'error' ? ' error' : level === 'success' ? ' success' : '');
     }
 
-    function setAuthMeta() {
-      const meta = byId('authMeta');
-      if (state.userId) {
-        const displayName = state.username || ('user_' + state.userId);
-        meta.textContent = 'Signed in as #' + state.userId + ' (' + displayName + ', ' + state.role + ')';
-      } else {
-        meta.textContent = 'Not authenticated';
-      }
+    function setWelcomeStatus(text, level = 'muted') {
+      const el = byId('welcomeStatus');
+      if (!el) return;
+      el.textContent = text;
+      el.className = 'wv-status' + (level === 'error' ? ' error' : level === 'success' ? ' success' : '');
+    }
+
+    function setLobbyStatus(text, level = 'muted') {
+      const bar = byId('lobbyStatusBar');
+      if (!bar) return;
+      if (!text) { bar.textContent = ''; bar.classList.remove('visible'); return; }
+      bar.textContent = text;
+      bar.className = 'lv-status-bar visible' + (level === 'error' ? ' error' : '');
+    }
+
+    function escHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
     function safeNextPath(raw) {
-      if (!raw) return null;
-      if (typeof raw !== 'string') return null;
-      if (!raw.startsWith('/45s/')) return null;
-      return raw;
+      if (!raw || typeof raw !== 'string') return null;
+      return raw.startsWith('/45/') ? raw : null;
     }
 
-    function syncAuthUi() {
-      const signedOut = byId('authSignedOut');
-      const signedIn = byId('authSignedIn');
-      const current = byId('currentUserInfo');
+    // ── Auth tab switcher (welcome view) ─────────────────────────────────────
+    function showAuthTab(tab) {
+      ['signin', 'join'].forEach(t => {
+        const capitalized = t.charAt(0).toUpperCase() + t.slice(1);
+        const panel = byId('tab' + capitalized);
+        const btn   = byId('tabBtn' + capitalized);
+        if (panel) panel.classList.toggle('active', t === tab);
+        if (btn)   btn.classList.toggle('active', t === tab);
+      });
+      setWelcomeStatus('');
+    }
 
-      if (state.userId) {
-        signedOut.style.display = 'none';
-        signedIn.style.display = 'block';
-        const displayName = state.username || ('user_' + state.userId);
-        current.textContent = displayName + ' | id #' + state.userId + ' | role ' + (state.role || 'player');
-      } else {
-        signedOut.style.display = 'block';
-        signedIn.style.display = 'none';
-        current.textContent = '';
+    // ── Social auth ──────────────────────────────────────────────────────────
+
+    async function initSocialAuth() {
+      try {
+        const p = await api('/api/auth/providers');
+        let anyEnabled = false;
+
+        if (p.google && p.google.enabled) {
+          anyEnabled = true;
+          initGoogle(p.google.client_id);
+        }
+
+        if (p.facebook && p.facebook.enabled) {
+          anyEnabled = true;
+          initFacebook(p.facebook.app_id);
+        }
+
+        if (p.apple && p.apple.enabled) {
+          anyEnabled = true;
+          initApple(p.apple.service_id);
+        }
+
+        if (anyEnabled) {
+          const sec = byId('socialSection');
+          if (sec) sec.style.display = '';
+        }
+      } catch (_) {
+        // Social auth providers not available; continue with local auth only
+      }
+    }
+
+    // ── Google ──
+    function initGoogle(clientId) {
+      window._handleGoogleCredential = async function(response) {
+        setWelcomeStatus('Signing in with Google…');
+        try {
+          const data = await api('/api/auth/google/login', 'POST', { id_token: response.credential });
+          onSocialSuccess(data);
+        } catch (err) {
+          setWelcomeStatus('Google sign-in failed: ' + err.message, 'error');
+        }
+      };
+
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        const wrap = byId('google-btn-wrap');
+        if (!wrap) return;
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: window._handleGoogleCredential,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+        google.accounts.id.renderButton(wrap, {
+          theme: 'outline',
+          size: 'large',
+          width: wrap.offsetWidth || 320,
+          logo_alignment: 'left',
+          text: 'continue_with',
+        });
+        wrap.style.display = '';
+      };
+      document.head.appendChild(script);
+    }
+
+    // ── Facebook ──
+    function initFacebook(appId) {
+      window.fbAsyncInit = function() {
+        FB.init({ appId, cookie: true, xfbml: false, version: 'v19.0' });
+      };
+
+      const script = document.createElement('script');
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+
+      const btn = byId('facebook-btn');
+      if (btn) btn.style.display = '';
+    }
+
+    async function socialFacebook() {
+      if (typeof FB === 'undefined') {
+        setWelcomeStatus('Facebook SDK not ready yet, please try again.', 'error');
+        return;
+      }
+      setWelcomeStatus('Connecting to Facebook…');
+      try {
+        const authResponse = await new Promise((resolve, reject) => {
+          FB.login(res => {
+            if (res.authResponse) resolve(res.authResponse);
+            else reject(new Error('Login cancelled'));
+          }, { scope: 'public_profile,email' });
+        });
+
+        const me = await new Promise(resolve => {
+          FB.api('/me', { fields: 'id,name,first_name,last_name,email' }, resolve);
+        });
+
+        const data = await api('/api/auth/facebook/login', 'POST', {
+          access_token: authResponse.accessToken,
+          user_id:      authResponse.userID,
+          first_name:   me.first_name || null,
+          last_name:    me.last_name  || null,
+        });
+        onSocialSuccess(data);
+      } catch (err) {
+        setWelcomeStatus('Facebook sign-in failed: ' + err.message, 'error');
+      }
+    }
+
+    // ── Apple ──
+    function initApple(serviceId) {
+      const script = document.createElement('script');
+      script.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
+      script.async = true;
+      script.onload = () => {
+        AppleID.auth.init({
+          clientId:    serviceId,
+          scope:       'name email',
+          redirectURI: window.location.origin + '/45/lobby.html',
+          usePopup:    true,
+        });
+        const btn = byId('apple-btn');
+        if (btn) btn.style.display = '';
+      };
+      document.head.appendChild(script);
+    }
+
+    async function socialApple() {
+      if (typeof AppleID === 'undefined') {
+        setWelcomeStatus('Apple SDK not ready yet, please try again.', 'error');
+        return;
+      }
+      setWelcomeStatus('Connecting to Apple…');
+      try {
+        const response  = await AppleID.auth.signIn();
+        const idToken   = response.authorization.id_token;
+        const firstName = response.user?.name?.firstName || null;
+        const lastName  = response.user?.name?.lastName  || null;
+
+        const data = await api('/api/auth/apple/login', 'POST', {
+          id_token:   idToken,
+          first_name: firstName,
+          last_name:  lastName,
+        });
+        onSocialSuccess(data);
+      } catch (err) {
+        if (err && err.error === 'popup_closed_by_user') {
+          setWelcomeStatus('');
+        } else {
+          setWelcomeStatus('Apple sign-in failed: ' + (err.message || err.error || 'Unknown error'), 'error');
+        }
+      }
+    }
+
+    // Common handler for all successful social logins
+    async function onSocialSuccess(data) {
+      state.userId      = data.user_id;
+      state.username    = data.username;
+      state.displayName = data.display_name || data.nickname || data.username || null;
+      state.role        = data.role;
+      state.csrfToken   = data.csrf_token || state.csrfToken;
+      window.APP_CSRF_TOKEN = state.csrfToken;
+      window.APP_USER_ID    = state.userId;
+      storeSessionDisplayName();
+      syncAuthUi();
+      await Promise.all([refreshLobby(), loadLobbyUsers()]);
+      maybeRedirectAfterAuth();
+    }
+
+    // ── View toggling ─────────────────────────────────────────────────────────
+    function syncAuthUi() {
+      const isLoggedIn = !!state.userId;
+      byId('welcomeView').style.display = isLoggedIn ? 'none' : '';
+      byId('lobbyView').style.display   = isLoggedIn ? '' : 'none';
+
+      if (isLoggedIn) {
+        const name = state.displayName || state.username || 'User #' + state.userId;
+        const roleSuffix = (state.role && state.role !== 'player')
+          ? ' <span class="lv-role">(' + escHtml(state.role) + ')</span>'
+          : '';
+        byId('currentUserInfo').innerHTML =
+          '<span class="lv-username" onclick="openPlayerModal(' + state.userId + ')">' +
+          escHtml(name) + '</span>' + roleSuffix;
       }
     }
 
     function storeSessionDisplayName() {
-      if (state.username) {
-        localStorage.setItem('fortyfives_username', state.username);
-      }
+      if (state.username) localStorage.setItem('fortyfives_username', state.username);
     }
 
     function loadSessionDisplayName() {
-      if (!state.username) {
-        const cached = localStorage.getItem('fortyfives_username');
-        if (cached) state.username = cached;
-      }
+      if (!state.username) state.username = localStorage.getItem('fortyfives_username') || null;
     }
 
     function maybeRedirectAfterAuth() {
       const next = safeNextPath(state.nextPath);
-      if (next) {
-        window.location.href = next;
-      }
+      if (next) window.location.href = next;
     }
 
     async function api(path, method = 'GET', body = null, withCsrf = false) {
       const opts = { method, headers: jsonHeaders(withCsrf), credentials: 'same-origin' };
-      if (body !== null) {
-        opts.body = JSON.stringify(body);
-      }
-
-      const res = await fetch(state.basePath + path, opts);
+      if (body !== null) opts.body = JSON.stringify(body);
+      const res  = await fetch(state.basePath + path, opts);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error((data && data.error) ? data.error : ('http_' + res.status));
-      }
+      if (!res.ok) throw new Error((data && data.error) ? data.error : 'http_' + res.status);
       return data;
     }
 
     async function refreshAuth() {
       try {
         const me = await api('/api/auth/me');
-        state.userId = me.user_id || null;
-        state.role = me.role || null;
-        state.csrfToken = me.csrf_token || '';
+        state.userId     = me.user_id   || null;
+        state.role       = me.role      || null;
+        state.csrfToken  = me.csrf_token || '';
+        window.APP_CSRF_TOKEN = state.csrfToken;
+        window.APP_USER_ID    = state.userId;
         if (!me.authenticated) {
-          state.username = null;
+          state.username = null; state.displayName = null;
         } else {
           loadSessionDisplayName();
+          state.displayName = me.display_name || me.nickname || me.username || state.username || null;
         }
       } catch (_) {
-        state.userId = null;
-        state.username = null;
-        state.role = null;
-        state.csrfToken = '';
+        state.userId = null; state.username = null; state.role = null; state.csrfToken = '';
       }
-      setAuthMeta();
       syncAuthUi();
     }
 
     async function loginLocal() {
-      setStatus('authStatus', 'Signing in...', 'muted');
+      setWelcomeStatus('Signing in…');
       try {
         const data = await api('/api/auth/login', 'POST', {
           username: byId('loginUsername').value.trim(),
           password: byId('loginPassword').value,
         });
-        state.userId = data.user_id;
-        state.username = data.username;
-        state.role = data.role;
-        state.csrfToken = data.csrf_token || state.csrfToken;
+        state.userId      = data.user_id;
+        state.username    = data.username;
+        state.displayName = data.display_name || data.nickname || data.username || null;
+        state.role        = data.role;
+        state.csrfToken   = data.csrf_token || state.csrfToken;
+        window.APP_CSRF_TOKEN = state.csrfToken;
+        window.APP_USER_ID    = state.userId;
         storeSessionDisplayName();
-        setAuthMeta();
         syncAuthUi();
-        setStatus('authStatus', 'Sign-in successful.', 'success');
-        await refreshLobby();
+        await Promise.all([refreshLobby(), loadLobbyUsers()]);
         maybeRedirectAfterAuth();
       } catch (err) {
-        setStatus('authStatus', 'Sign-in failed: ' + err.message, 'error');
+        setWelcomeStatus('Sign-in failed: ' + err.message, 'error');
       }
     }
 
     async function logoutUser() {
-      if (!state.userId) {
-        setStatus('authStatus', 'Already signed out.', 'muted');
-        return;
-      }
+      if (!state.userId) return;
       try {
         await api('/api/auth/logout', 'POST', {}, true);
-        state.userId = null;
-        state.username = null;
-        state.role = null;
-        state.csrfToken = '';
+        state.userId = null; state.username = null; state.displayName = null;
+        state.role   = null; state.csrfToken = '';
+        window.APP_CSRF_TOKEN = '';
+        window.APP_USER_ID    = null;
         localStorage.removeItem('fortyfives_username');
-        setAuthMeta();
         syncAuthUi();
-        setStatus('authStatus', 'Signed out.', 'success');
-        renderRows('myGamesBody', []);
-        renderRows('joinableGamesBody', []);
+        clearGameSections();
+        setWelcomeStatus('You have signed out.', 'success');
       } catch (err) {
-        setStatus('authStatus', 'Sign-out failed: ' + err.message, 'error');
+        setLobbyStatus('Sign-out failed: ' + err.message, 'error');
       }
     }
 
     async function registerUser() {
-      setStatus('authStatus', 'Creating account...', 'muted');
+      setWelcomeStatus('Creating your account…');
       try {
         const username = byId('registerUsername').value.trim();
-        const email = byId('registerEmail').value.trim();
+        const email    = byId('registerEmail').value.trim();
         const password = byId('registerPassword').value;
-
         const data = await api('/api/auth/register', 'POST', {
-          username,
-          email: email === '' ? null : email,
-          password,
+          username, email: email || null, password,
         });
-
-        state.userId = data.user_id;
-        state.username = username;
-        state.role = data.role;
-        state.csrfToken = data.csrf_token || state.csrfToken;
+        state.userId      = data.user_id;
+        state.username    = username;
+        state.displayName = data.display_name || data.nickname || username || null;
+        state.role        = data.role;
+        state.csrfToken   = data.csrf_token || state.csrfToken;
+        window.APP_CSRF_TOKEN = state.csrfToken;
+        window.APP_USER_ID    = state.userId;
         storeSessionDisplayName();
-        setAuthMeta();
         syncAuthUi();
-
-        const welcome = byId('welcome');
-        welcome.style.display = 'block';
-        welcome.textContent = 'Welcome, ' + username + '. Your account is ready and you are signed in.';
-
-        setStatus('authStatus', 'Account created.', 'success');
-        await refreshLobby();
+        const w = byId('welcome');
+        if (w) { w.style.display = 'block'; w.textContent = 'Welcome, ' + escHtml(state.displayName || username) + '! Your account is ready.'; }
+        await Promise.all([refreshLobby(), loadLobbyUsers()]);
         maybeRedirectAfterAuth();
       } catch (err) {
-        setStatus('authStatus', 'Registration failed: ' + err.message, 'error');
+        setWelcomeStatus('Could not create account: ' + err.message, 'error');
       }
     }
 
-    function parseSeatList(raw) {
-      if (!raw.trim()) return [];
-      return raw
-        .split(',')
-        .map(s => Number(s.trim()))
-        .filter(n => Number.isInteger(n) && n >= 0 && n <= 3);
+    // ── Seat picker ───────────────────────────────────────────────────────────
+    const seatState = {
+      playerCount: 4,
+      seats: {},
+    };
+
+    function setPlayerCount(n) {
+      seatState.playerCount = n;
+      document.querySelectorAll('.pct-btn').forEach(b => {
+        b.classList.toggle('active', Number(b.dataset.count) === n);
+      });
+      renderSeatGrid();
     }
 
-    function toggleInviteMode() {
-      const mode = byId('inviteMode').value;
-      byId('specificInvites').className = mode === 'specific' ? '' : 'hidden';
+    function renderSeatGrid() {
+      const grid = byId('seatsGrid');
+      grid.querySelectorAll('.seat-row[data-seat]').forEach(el => el.remove());
+      for (let seat = 1; seat < seatState.playerCount; seat++) {
+        if (!seatState.seats[seat]) seatState.seats[seat] = { type: 'ai', userId: null, displayName: null };
+        grid.appendChild(buildSeatRow(seat));
+      }
     }
 
-    async function createGame() {
-      if (!state.userId) {
-        setStatus('createStatus', 'Please sign in first.', 'error');
+    function buildSeatRow(seat) {
+      const s = seatState.seats[seat];
+      const isYourTeam = seat % 2 === 0;
+      const teamLabel  = isYourTeam ? 'your team' : 'opponents';
+      const teamClass  = isYourTeam ? 'team-a' : 'team-b';
+
+      const row = document.createElement('div');
+      row.className = 'seat-row';
+      row.dataset.seat = String(seat);
+
+      const top  = document.createElement('div');
+      top.className = 'seat-row-top';
+
+      const info = document.createElement('div');
+      info.className = 'seat-info';
+      info.innerHTML = `<span class="seat-num">${seat}</span><span class="team-tag ${teamClass}">${teamLabel}</span>`;
+
+      const btns = document.createElement('div');
+      btns.className = 'seat-type-btns';
+      [['ai','AI'],['open','Open'],['invite','Invite']].forEach(([type, label]) => {
+        const btn = document.createElement('button');
+        btn.className = 'seat-type-btn' + (s.type === type ? (type === 'invite' ? ' active-invite' : ' active') : '');
+        btn.textContent = label;
+        btn.onclick = () => setSeatType(seat, type);
+        btns.appendChild(btn);
+      });
+
+      top.appendChild(info);
+      top.appendChild(btns);
+      row.appendChild(top);
+
+      if (s.type === 'invite') {
+        const picker = document.createElement('div');
+        picker.className = 'invite-picker';
+
+        if (s.userId) {
+          const sel = document.createElement('div');
+          sel.className = 'invite-selected';
+          sel.innerHTML = `<span class="invite-selected-name">${escHtml(s.displayName || 'User #' + s.userId)}</span>`;
+          const clr = document.createElement('button');
+          clr.className = 'invite-clear';
+          clr.textContent = '×';
+          clr.onclick = () => { seatState.seats[seat] = { type: 'invite', userId: null, displayName: null }; rerenderSeatRow(seat); };
+          sel.appendChild(clr);
+          picker.appendChild(sel);
+        } else {
+          const input = document.createElement('input');
+          input.className = 'invite-search';
+          input.placeholder = 'Search players…';
+          input.setAttribute('autocomplete', 'off');
+
+          const dropdown = document.createElement('div');
+          dropdown.className = 'invite-dropdown';
+
+          input.addEventListener('focus', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = ''; });
+          input.addEventListener('input', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = ''; });
+          input.addEventListener('blur',  () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
+
+          picker.appendChild(input);
+          picker.appendChild(dropdown);
+        }
+        row.appendChild(picker);
+      }
+
+      return row;
+    }
+
+    function rerenderSeatRow(seat) {
+      const grid = byId('seatsGrid');
+      const existing = grid.querySelector(`.seat-row[data-seat="${seat}"]`);
+      if (existing) existing.replaceWith(buildSeatRow(seat));
+    }
+
+    function setSeatType(seat, type) {
+      seatState.seats[seat] = { type, userId: null, displayName: null };
+      rerenderSeatRow(seat);
+    }
+
+    function renderInviteDropdown(seat, query, dropdown) {
+      const users = state.lobbyUsers || [];
+      const q = query.toLowerCase().trim();
+      const filtered = q
+        ? users.filter(u => (u.display_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+        : users;
+
+      dropdown.innerHTML = '';
+
+      if (filtered.length === 0) {
+        dropdown.innerHTML = '<div class="invite-empty">No players found</div>';
         return;
       }
 
+      const recent = filtered.filter(u => Number(u.recently_played));
+      const others = filtered.filter(u => !Number(u.recently_played));
+
+      if (recent.length > 0 && !q) {
+        const lbl = document.createElement('div');
+        lbl.className = 'invite-section-label';
+        lbl.textContent = 'Recently played';
+        dropdown.appendChild(lbl);
+      }
+
+      [...recent, ...others].slice(0, 12).forEach(u => {
+        const item = document.createElement('div');
+        item.className = 'invite-item' + (Number(u.recently_played) ? ' recent' : '');
+        item.innerHTML = `<strong>${escHtml(u.display_name)}</strong><span class="invite-email">${escHtml(u.email || '')}</span>`;
+        item.onmousedown = () => {
+          seatState.seats[seat] = { type: 'invite', userId: Number(u.id), displayName: u.display_name };
+          rerenderSeatRow(seat);
+        };
+        dropdown.appendChild(item);
+      });
+    }
+
+    async function loadLobbyUsers() {
+      if (!state.userId) return;
       try {
-        const inviteMode = byId('inviteMode').value;
+        const data = await api('/api/lobby/users');
+        state.lobbyUsers = data.users || [];
+      } catch (_) {
+        state.lobbyUsers = [];
+      }
+    }
+
+    // ── Game actions ──────────────────────────────────────────────────────────
+
+    async function createGame() {
+      if (!state.userId) { setStatus('createStatus', 'Sign in first.', 'error'); return; }
+      setStatus('createStatus', '');
+      try {
+        const playerCount = seatState.playerCount;
+        const aiSeats = [], invites = [];
+        let hasOpen = false;
+
+        for (let seat = 1; seat < playerCount; seat++) {
+          const s = seatState.seats[seat] || { type: 'ai', userId: null };
+          if (s.type === 'ai') {
+            aiSeats.push(seat);
+          } else if (s.type === 'invite' && s.userId) {
+            invites.push({ seat, user_id: s.userId });
+          } else if (s.type === 'open' || (s.type === 'invite' && !s.userId)) {
+            hasOpen = true;
+          }
+        }
+
         const payload = {
           target_score: Number(byId('targetScore').value),
           ruleset: 'chartrand',
+          player_count: playerCount,
           user_id: state.userId,
-          invite_mode: inviteMode,
-          ai_seats: parseSeatList(byId('aiSeats').value),
+          invite_mode: hasOpen ? 'open' : 'specific',
+          ai_seats: aiSeats,
         };
-
-        if (inviteMode === 'specific') {
-          const seat1 = Number(byId('inviteSeat1').value);
-          const seat3 = Number(byId('inviteSeat3').value);
-          payload.invites = [];
-          if (Number.isInteger(seat1) && seat1 > 0) payload.invites.push({ seat: 1, user_id: seat1 });
-          if (Number.isInteger(seat3) && seat3 > 0) payload.invites.push({ seat: 3, user_id: seat3 });
-        }
+        if (invites.length > 0) payload.invites = invites;
+        if (!hasOpen && invites.length === 0) payload.invite_mode = 'open';
 
         const created = await api('/api/lobby/create_game', 'POST', payload, true);
-        setStatus('createStatus', 'Game #' + created.game_id + ' created.', 'success');
-        await refreshLobby();
+        seatState.seats = {};
+        renderSeatGrid();
+        window.location.href = state.basePath + '/game.html?game_id=' + created.game_id;
       } catch (err) {
         setStatus('createStatus', 'Create failed: ' + err.message, 'error');
       }
     }
 
     async function joinGame(gameId) {
-      if (!state.userId) {
-        setStatus('authStatus', 'Please sign in first.', 'error');
-        return;
-      }
+      if (!state.userId) { setLobbyStatus('Sign in first.', 'error'); return; }
       try {
-        const joined = await api('/api/lobby/join_game', 'POST', {
-          game_id: gameId,
-          user_id: state.userId,
-        }, true);
-        setStatus('authStatus', 'Joined game #' + gameId + ' at seat ' + joined.seat + '.', 'success');
+        await api('/api/lobby/join_game', 'POST', { game_id: gameId, user_id: state.userId }, true);
+        window.location.href = state.basePath + '/game.html?game_id=' + gameId;
+      } catch (err) {
+        setLobbyStatus('Join failed: ' + err.message, 'error');
+      }
+    }
+
+    async function archiveGame(gameId) {
+      if (!confirm('Remove game #' + gameId + ' from your list?')) return;
+      try {
+        await api('/api/lobby/archive_game', 'POST', { game_id: gameId }, true);
         await refreshLobby();
       } catch (err) {
-        setStatus('authStatus', 'Join failed: ' + err.message, 'error');
+        setLobbyStatus('Archive failed: ' + err.message, 'error');
       }
     }
 
-    function renderRows(tbodyId, rows, renderer) {
-      const body = byId(tbodyId);
-      body.innerHTML = '';
-      if (!rows || rows.length === 0) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="6" class="muted">No rows yet.</td>';
-        body.appendChild(tr);
-        return;
+    async function adminDeleteGame(gameId) {
+      if (!confirm('Archive game #' + gameId + '?')) return;
+      try {
+        await api('/api/admin/delete_game', 'POST', { game_id: gameId }, true);
+        setStatus('adminStatus', 'Game #' + gameId + ' archived.', 'success');
+        await refreshLobby();
+      } catch (err) {
+        setStatus('adminStatus', 'Failed: ' + err.message, 'error');
       }
-      rows.forEach(r => body.appendChild(renderer(r)));
     }
 
-    function renderMyGames(games) {
-      renderRows('myGamesBody', games, g => {
-        const tr = document.createElement('tr');
-        const boardLink = '<a href="' + state.basePath + '/game.html?game_id=' + encodeURIComponent(g.id) + '">Open</a>';
-        tr.innerHTML =
-          '<td class="mono">#' + g.id + '</td>' +
-          '<td>' + g.status + '</td>' +
-          '<td>' + g.ruleset + '</td>' +
-          '<td>' + g.target_score + '</td>' +
-          '<td>' + (g.current_phase || '-') + '</td>' +
-          '<td>' + boardLink + '</td>';
-        return tr;
+    function isAdmin() { return state.role === 'owner' || state.role === 'admin'; }
+
+    // ── Player / matchup helpers ──────────────────────────────────────────────
+
+    function playerName(p) {
+      if (Number(p.is_ai)) return 'AI';
+      if (!p.user_id)       return null;
+      if (Number(p.user_id) === state.userId) return 'You';
+      return p.display_name || p.username || ('#' + p.user_id);
+    }
+
+    function matchupNode(players) {
+      const sorted = [...players].sort((a, b) => Number(a.seat) - Number(b.seat));
+      const team0  = sorted.filter(p => Number(p.team) === 0);
+      const team1  = sorted.filter(p => Number(p.team) === 1);
+
+      function teamSpans(seats) {
+        return seats.map(p => {
+          const name = playerName(p);
+          const span = document.createElement('span');
+          if (name === null) {
+            span.textContent = '[Open]';
+            span.className = 'open-slot';
+          } else if (name === 'You') {
+            span.textContent = 'You';
+            span.className = 'you';
+            span.style.cursor = 'pointer';
+            span.onclick = () => openPlayerModal(state.userId);
+          } else {
+            span.textContent = name;
+            if (p.user_id) {
+              span.style.cursor = 'pointer';
+              span.style.textDecoration = 'underline';
+              span.style.textUnderlineOffset = '2px';
+              span.onclick = () => openPlayerModal(Number(p.user_id));
+            }
+          }
+          return span;
+        });
+      }
+
+      const frag = document.createDocumentFragment();
+      const t0 = teamSpans(team0);
+      t0.forEach((s, i) => {
+        frag.appendChild(s);
+        if (i < t0.length - 1) { const amp = document.createElement('span'); amp.textContent = ' & '; frag.appendChild(amp); }
       });
+      const vs = document.createElement('span'); vs.textContent = 'vs'; vs.className = 'vs';
+      frag.appendChild(vs);
+      const t1 = teamSpans(team1);
+      t1.forEach((s, i) => {
+        frag.appendChild(s);
+        if (i < t1.length - 1) { const amp = document.createElement('span'); amp.textContent = ' & '; frag.appendChild(amp); }
+      });
+
+      return frag;
     }
 
-    function renderJoinable(games) {
-      renderRows('joinableGamesBody', games, g => {
-        const tr = document.createElement('tr');
+    // ── Card builders ─────────────────────────────────────────────────────────
+
+    const STATUS_LABELS = { active: 'In Progress', lobby: 'Waiting', finished: 'Finished' };
+    const PHASE_LABELS  = { bidding: 'Bidding', declare_trump: 'Trump', discard_phase: 'Discard', trick_play: 'Trick Play' };
+
+    function metaChips(g) {
+      const div = document.createElement('div');
+      div.className = 'game-meta';
+
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + g.status;
+      badge.textContent = STATUS_LABELS[g.status] || g.status;
+      div.appendChild(badge);
+
+      const pts = document.createElement('span');
+      pts.className = 'meta-pill';
+      pts.textContent = g.target_score + ' pts';
+      div.appendChild(pts);
+
+      const id = document.createElement('span');
+      id.className = 'game-id';
+      id.textContent = '#' + g.id;
+      div.appendChild(id);
+
+      return div;
+    }
+
+    function buildActiveCard(g) {
+      const card = document.createElement('div');
+      card.className = 'game-card active';
+
+      const body = document.createElement('div');
+      body.className = 'game-card-body';
+
+      const matchup = document.createElement('div');
+      matchup.className = 'game-matchup';
+      matchup.appendChild(matchupNode(g.players || []));
+      body.appendChild(matchup);
+      body.appendChild(metaChips(g));
+      card.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'game-actions';
+
+      const link = document.createElement('a');
+      link.className = 'btn-board';
+      link.href = state.basePath + '/game.html?game_id=' + encodeURIComponent(g.id);
+      link.textContent = 'Open Board';
+      actions.appendChild(link);
+
+      const del = document.createElement('button');
+      del.className = 'btn-del';
+      del.textContent = 'Archive';
+      del.onclick = () => archiveGame(Number(g.id));
+      actions.appendChild(del);
+
+      card.appendChild(actions);
+      return card;
+    }
+
+    function buildOpenCard(g) {
+      const card = document.createElement('div');
+      card.className = 'game-card open' + (Number(g.invited) ? ' invited' : '');
+
+      const body = document.createElement('div');
+      body.className = 'game-card-body';
+
+      const matchup = document.createElement('div');
+      matchup.className = 'game-matchup';
+      matchup.appendChild(matchupNode(g.players || []));
+      body.appendChild(matchup);
+
+      const chips = metaChips(g);
+      if (Number(g.invited)) {
+        const inv = document.createElement('span');
+        inv.className = 'badge invited-badge';
+        inv.textContent = 'Invited';
+        chips.insertBefore(inv, chips.firstChild);
+      }
+      body.appendChild(chips);
+      card.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'game-actions';
+
+      const alreadySeated = (g.players || []).some(p => String(p.user_id) === String(state.userId));
+      if (alreadySeated) {
+        const waiting = document.createElement('span');
+        waiting.className = 'waiting-label';
+        waiting.textContent = 'Waiting for players…';
+        actions.appendChild(waiting);
+      } else {
         const btn = document.createElement('button');
+        btn.className = 'btn-join';
         btn.textContent = 'Join';
         btn.onclick = () => joinGame(Number(g.id));
+        actions.appendChild(btn);
+      }
+      card.appendChild(actions);
+      return card;
+    }
 
-        const tdAction = document.createElement('td');
-        tdAction.appendChild(btn);
+    function buildPastCard(g) {
+      const card = document.createElement('div');
+      card.className = 'game-card past';
 
+      const body = document.createElement('div');
+      body.className = 'game-card-body';
+
+      const matchup = document.createElement('div');
+      matchup.className = 'game-matchup';
+      matchup.appendChild(matchupNode(g.players || []));
+      body.appendChild(matchup);
+      body.appendChild(metaChips(g));
+      card.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'game-actions';
+      const del = document.createElement('button');
+      del.className = 'btn-del';
+      del.textContent = 'Archive';
+      del.onclick = () => archiveGame(Number(g.id));
+      actions.appendChild(del);
+      card.appendChild(actions);
+      return card;
+    }
+
+    function renderList(containerId, games, builder, emptyMsg) {
+      const el = byId(containerId);
+      el.innerHTML = '';
+      if (!games || games.length === 0) {
+        const div = document.createElement('div');
+        div.className = 'empty';
+        div.textContent = emptyMsg;
+        el.appendChild(div);
+      } else {
+        games.forEach(g => el.appendChild(builder(g)));
+      }
+    }
+
+    function clearGameSections() {
+      renderList('activeList', [], buildActiveCard, 'No active games.');
+      renderList('openList',   [], buildOpenCard,   'No open tables right now.');
+      byId('pastSection').style.display = 'none';
+      byId('activeCount').textContent = '0';
+      byId('openCount').textContent   = '0';
+      byId('pastCount').textContent   = '0';
+    }
+
+    // ── Admin table ───────────────────────────────────────────────────────────
+
+    function renderAllGames(games) {
+      const body = byId('allGamesBody');
+      body.innerHTML = '';
+      if (!games || games.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" class="status">No games.</td></tr>';
+        return;
+      }
+      games.forEach(g => {
+        const tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="mono">#' + g.id + '</td>' +
-          '<td>' + g.status + '</td>' +
-          '<td>' + (Number(g.invited) === 1 ? 'yes' : 'no') + '</td>' +
-          '<td>' + (g.open_human_seats ?? '-') + '</td>';
-        tr.appendChild(tdAction);
-        return tr;
+          '<td class="mono" style="font-size:11px">#' + g.id + '</td>' +
+          '<td>' + (STATUS_LABELS[g.status] || g.status) + '</td>' +
+          '<td>' + (PHASE_LABELS[g.current_phase] || g.current_phase || '—') + '</td>' +
+          '<td class="mono" style="font-size:10px">' + (g.created_at || '').substring(0, 16).replace('T', ' ') + '</td>';
+        const td = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.textContent = 'Archive';
+        btn.className = 'sm danger';
+        btn.onclick = () => adminDeleteGame(Number(g.id));
+        td.appendChild(btn);
+        tr.appendChild(td);
+        body.appendChild(tr);
       });
     }
 
+    // ── Lobby refresh ─────────────────────────────────────────────────────────
+
     async function refreshLobby() {
-      if (!state.userId) {
-        renderRows('myGamesBody', []);
-        renderRows('joinableGamesBody', []);
-        return;
-      }
+      if (!state.userId) { clearGameSections(); byId('adminPanel').style.display = 'none'; return; }
 
       try {
-        const [mine, joinable] = await Promise.all([
-          api('/api/lobby/my_games?user_id=' + encodeURIComponent(state.userId)),
+        const requests = [
+          api('/api/lobby/my_games?user_id='    + encodeURIComponent(state.userId)),
           api('/api/lobby/list_joinable?user_id=' + encodeURIComponent(state.userId)),
-        ]);
+        ];
+        if (isAdmin()) requests.push(api('/api/admin/games'));
 
-        renderMyGames(mine.games || []);
-        renderJoinable(joinable.games || []);
+        const results  = await Promise.all(requests);
+        const myGames  = results[0].games || [];
+        const joinable = results[1].games || [];
+
+        const hasOpenHumanSlot = g => (g.players || []).some(p => !p.user_id && !Number(p.is_ai));
+
+        const active   = myGames.filter(g => g.status === 'active' && !hasOpenHumanSlot(g));
+        const finished = myGames.filter(g => g.status === 'finished');
+
+        const myActiveIds = new Set(active.map(g => String(g.id)));
+        const myOpenGames = myGames.filter(g => hasOpenHumanSlot(g));
+        const myOpenIds   = new Set(myOpenGames.map(g => String(g.id)));
+        const openFromJoinable = joinable
+          .filter(g => !myActiveIds.has(String(g.id)) && !myOpenIds.has(String(g.id)))
+          .sort((a, b) => Number(b.invited) - Number(a.invited));
+        const open = [...myOpenGames, ...openFromJoinable];
+
+        renderList('activeList', active, buildActiveCard,
+          'No active games — start one or join an open table.');
+        renderList('openList', open, buildOpenCard, 'No open tables right now.');
+
+        byId('activeCount').textContent = String(active.length);
+        byId('openCount').textContent   = String(open.length);
+
+        if (finished.length > 0) {
+          byId('pastSection').style.display = '';
+          byId('pastCount').textContent = String(finished.length);
+          renderList('pastList', finished, buildPastCard, '');
+        } else {
+          byId('pastSection').style.display = 'none';
+        }
+
+        if (isAdmin()) {
+          byId('adminPanel').style.display = '';
+          renderAllGames(results[2].games || []);
+        } else {
+          byId('adminPanel').style.display = 'none';
+        }
+
+        setLobbyStatus(''); // clear any prior error
+
       } catch (err) {
-        setStatus('authStatus', 'Lobby refresh failed: ' + err.message, 'error');
+        setLobbyStatus('Could not load games: ' + err.message, 'error');
       }
     }
 
+    // ── Init ──────────────────────────────────────────────────────────────────
     (async () => {
       const params = new URLSearchParams(window.location.search);
       state.nextPath = safeNextPath(params.get('next'));
-      toggleInviteMode();
+      renderSeatGrid();
       await refreshAuth();
-      await refreshLobby();
+      await Promise.all([refreshLobby(), loadLobbyUsers(), initSocialAuth()]);
+
+      let lobbyPollTimer = null;
+      function scheduleLobbyPoll() {
+        lobbyPollTimer = setTimeout(async () => {
+          if (!document.hidden) await refreshLobby();
+          scheduleLobbyPoll();
+        }, 3000);
+      }
+      scheduleLobbyPoll();
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) refreshLobby();
+      });
     })();
   </script>
 </body>

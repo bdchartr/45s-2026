@@ -7,9 +7,12 @@ DirectoryIndex index.php
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteBase /45s/
+  RewriteBase /45/
 
-  RewriteCond %{REQUEST_URI} !^/45s/public/
+  # Serve HTML pages from public/ without changing the URL
+  RewriteRule ^(game|lobby|admin|player)\.html$ public/$1.html [L]
+
+  RewriteCond %{REQUEST_URI} !^/45/public/
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ index.php [QSA,L]

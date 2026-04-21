@@ -10,18 +10,19 @@ class GameRepository
     {
     }
 
-    public function createGame(int $targetScore, string $ruleset, ?int $createdByUserId = null): int
+    public function createGame(int $targetScore, string $ruleset, ?int $createdByUserId = null, int $playerCount = 4): int
     {
-        $sql = 'INSERT INTO games (status, target_score, ruleset, dealer_seat, current_phase, current_turn_seat, hand_number, created_by_user_id)
-                VALUES (:status, :target_score, :ruleset, :dealer_seat, :current_phase, :current_turn_seat, :hand_number, :created_by_user_id)';
+        $sql = 'INSERT INTO games (status, target_score, ruleset, player_count, dealer_seat, current_phase, current_turn_seat, hand_number, created_by_user_id)
+                VALUES (:status, :target_score, :ruleset, :player_count, :dealer_seat, :current_phase, :current_turn_seat, :hand_number, :created_by_user_id)';
         $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute([
             'status' => 'active',
             'target_score' => $targetScore,
             'ruleset' => $ruleset,
+            'player_count' => $playerCount,
             'dealer_seat' => 0,
             'current_phase' => 'bidding',
-            'current_turn_seat' => 0,
+            'current_turn_seat' => 1, // dealNewHand will set this correctly; 1 = left of dealer (seat 0)
             'hand_number' => 1,
             'created_by_user_id' => $createdByUserId,
         ]);
@@ -94,7 +95,7 @@ class GameRepository
 
     public function findUserById(int $userId): ?array
     {
-        $sql = 'SELECT id, username, email, password_hash, role, auth_provider, external_sub, google_sub, created_at, updated_at
+        $sql = 'SELECT id, username, nickname, email, password_hash, role, auth_provider, external_sub, google_sub, avatar_code, created_at, updated_at
                 FROM users
                 WHERE id = :id
                 LIMIT 1';
@@ -105,9 +106,33 @@ class GameRepository
         return $row ?: null;
     }
 
+    public function createSocialUser(
+        string $username,
+        ?string $email,
+        string $authProvider,
+        string $externalSub,
+        ?string $nickname = null,
+        string $role = 'player'
+    ): int {
+        $sql = 'INSERT INTO users (username, email, password_hash, role, auth_provider, external_sub, nickname)
+                VALUES (:username, :email, NULL, :role, :auth_provider, :external_sub, :nickname)';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([
+            'username'     => $username,
+            'email'        => $email,
+            'role'         => $role,
+            'auth_provider' => $authProvider,
+            'external_sub' => $externalSub,
+            'nickname'     => $nickname,
+        ]);
+
+        return (int) $this->db->pdo()->lastInsertId();
+    }
+
     public function findUserByUsername(string $username): ?array
     {
-        $sql = 'SELECT id, username, email, password_hash, role, auth_provider, external_sub, google_sub, created_at, updated_at
+        $sql = 'SELECT id, username, COALESCE(nickname, username) AS display_name,
+                       email, password_hash, role, auth_provider, external_sub, google_sub, created_at, updated_at
                 FROM users
                 WHERE username = :username
                 LIMIT 1';
@@ -163,6 +188,157 @@ class GameRepository
         return $stmt->rowCount() === 1;
     }
 
+    public function updateAvatar(int $userId, string $avatarCode): void
+    {
+        $stmt = $this->db->pdo()->prepare('UPDATE users SET avatar_code = :code WHERE id = :id');
+        $stmt->execute(['code' => $avatarCode, 'id' => $userId]);
+    }
+
+    public function updateNickname(int $userId, ?string $nickname): void
+    {
+        $stmt = $this->db->pdo()->prepare('UPDATE users SET nickname = :nick WHERE id = :id');
+        $stmt->execute(['nick' => $nickname === '' ? null : $nickname, 'id' => $userId]);
+    }
+
+    public function updatePassword(int $userId, string $passwordHash): void
+    {
+        $stmt = $this->db->pdo()->prepare('UPDATE users SET password_hash = :hash WHERE id = :id');
+        $stmt->execute(['hash' => $passwordHash, 'id' => $userId]);
+    }
+
+    /**
+     * Compute full stats for a user: wins, partners, opponents, monthly win %.
+     */
+    public function statsForUser(int $userId): array
+    {
+        $pdo = $this->db->pdo();
+
+        // 1. Total game counts
+        $stmt = $pdo->prepare(
+            'SELECT
+                COUNT(DISTINCT gp.game_id) AS total,
+                SUM(CASE WHEN g.status = "active"   THEN 1 ELSE 0 END) AS active_count,
+                SUM(CASE WHEN g.status = "finished" THEN 1 ELSE 0 END) AS finished_count
+             FROM game_players gp
+             JOIN games g ON g.id = gp.game_id
+             WHERE gp.user_id = :uid AND gp.is_ai = 0 AND g.archived_at IS NULL'
+        );
+        $stmt->execute(['uid' => $userId]);
+        $counts = $stmt->fetch() ?: [];
+
+        // 2. Finished game outcomes (team + final scores + date)
+        $stmt = $pdo->prepare(
+            'SELECT g.id, gp.team AS user_team, g.target_score,
+                    SUBSTR(COALESCE(g.updated_at, ""), 1, 7) AS ym,
+                    s.team0_total, s.team1_total
+             FROM game_players gp
+             JOIN games g ON g.id = gp.game_id
+                          AND g.status = "finished"
+                          AND g.archived_at IS NULL
+             LEFT JOIN scores s ON s.game_id = g.id
+                               AND s.hand_id = (SELECT MAX(hand_id) FROM scores WHERE game_id = g.id)
+             WHERE gp.user_id = :uid AND gp.is_ai = 0
+             ORDER BY g.updated_at ASC'
+        );
+        $stmt->execute(['uid' => $userId]);
+        $finishedGames = $stmt->fetchAll();
+
+        // Determine win per game
+        $wonGame = [];
+        foreach ($finishedGames as $g) {
+            $team   = (int) ($g['user_team'] ?? 0);
+            $target = (int) ($g['target_score'] ?? 120);
+            $t0     = (int) ($g['team0_total'] ?? 0);
+            $t1     = (int) ($g['team1_total'] ?? 0);
+            $wonGame[(int) $g['id']] = ($team === 0) ? ($t0 >= $target || $t0 > $t1) : ($t1 >= $target || $t1 > $t0);
+        }
+        $totalWins = array_sum($wonGame);
+        $finCount  = count($finishedGames);
+        $winPct    = $finCount > 0 ? round($totalWins / $finCount * 100, 1) : 0.0;
+
+        // 3. Human co-players in finished games
+        $stmt = $pdo->prepare(
+            'SELECT gp_me.game_id, gp_me.team AS my_team,
+                    gp_co.user_id AS co_uid, gp_co.team AS co_team,
+                    COALESCE(u.nickname, u.username) AS co_username
+             FROM game_players gp_me
+             JOIN game_players gp_co ON gp_co.game_id  = gp_me.game_id
+                                    AND gp_co.user_id  != :uid
+                                    AND gp_co.is_ai     = 0
+                                    AND gp_co.user_id  IS NOT NULL
+             JOIN users u ON u.id = gp_co.user_id
+             JOIN games g  ON g.id = gp_me.game_id
+                          AND g.status = "finished"
+                          AND g.archived_at IS NULL
+             WHERE gp_me.user_id = :uid AND gp_me.is_ai = 0'
+        );
+        $stmt->execute(['uid' => $userId]);
+        $coplayers = $stmt->fetchAll();
+
+        $partnerMap  = [];
+        $opponentMap = [];
+        foreach ($coplayers as $co) {
+            $gid  = (int) $co['game_id'];
+            $coUid = (int) $co['co_uid'];
+            $won  = $wonGame[$gid] ?? false;
+            if ((int) $co['co_team'] === (int) $co['my_team']) {
+                if (!isset($partnerMap[$coUid])) {
+                    $partnerMap[$coUid] = ['user_id' => $coUid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0];
+                }
+                $partnerMap[$coUid]['games']++;
+                if ($won) { $partnerMap[$coUid]['wins']++; }
+            } else {
+                if (!isset($opponentMap[$coUid])) {
+                    $opponentMap[$coUid] = ['user_id' => $coUid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0];
+                }
+                $opponentMap[$coUid]['games']++;
+                if ($won) { $opponentMap[$coUid]['wins']++; }
+            }
+        }
+
+        $makeList = static function (array $map): array {
+            $list = array_values($map);
+            foreach ($list as &$r) {
+                $r['win_pct'] = $r['games'] > 0 ? round($r['wins'] / $r['games'] * 100, 1) : 0.0;
+            }
+            usort($list, static fn($a, $b) => $b['games'] - $a['games']);
+            return array_slice($list, 0, 8);
+        };
+
+        // 4. Monthly win % (chronological, last 18 months)
+        $monthly = [];
+        foreach ($finishedGames as $g) {
+            $ym = (string) ($g['ym'] ?? '');
+            if ($ym === '') {
+                continue;
+            }
+            if (!isset($monthly[$ym])) {
+                $monthly[$ym] = ['month' => $ym, 'games' => 0, 'wins' => 0, 'win_pct' => 0.0];
+            }
+            $monthly[$ym]['games']++;
+            if ($wonGame[(int) $g['id']] ?? false) {
+                $monthly[$ym]['wins']++;
+            }
+        }
+        $monthlyList = array_values($monthly);
+        foreach ($monthlyList as &$m) {
+            $m['win_pct'] = $m['games'] > 0 ? round($m['wins'] / $m['games'] * 100, 1) : 0.0;
+        }
+        unset($m);
+        $monthlyList = array_slice($monthlyList, -18);
+
+        return [
+            'games_played'   => (int) ($counts['total']          ?? 0),
+            'games_active'   => (int) ($counts['active_count']   ?? 0),
+            'games_finished' => $finCount,
+            'wins'           => $totalWins,
+            'win_pct'        => $winPct,
+            'partners'       => $makeList($partnerMap),
+            'opponents'      => $makeList($opponentMap),
+            'monthly'        => $monthlyList,
+        ];
+    }
+
     public function listUsers(int $limit = 200): array
     {
         $sql = 'SELECT id, username, email, role, auth_provider, external_sub, created_at, updated_at
@@ -180,6 +356,7 @@ class GameRepository
     {
         $sql = 'SELECT id, status, target_score, ruleset, dealer_seat, current_phase, current_turn_seat, hand_number, created_by_user_id, created_at, updated_at
                 FROM games
+                WHERE archived_at IS NULL
                 ORDER BY id DESC
                 LIMIT :limit';
         $stmt = $this->db->pdo()->prepare($sql);
@@ -189,12 +366,45 @@ class GameRepository
         return $stmt->fetchAll();
     }
 
+    /**
+     * Soft-archive a game (sets archived_at). No data is ever deleted.
+     * Returns true if the game existed and was not already archived.
+     */
+    public function archiveGame(int $gameId): bool
+    {
+        $stmt = $this->db->pdo()->prepare(
+            'UPDATE games SET archived_at = CURRENT_TIMESTAMP WHERE id = :game_id AND archived_at IS NULL'
+        );
+        $stmt->bindValue(':game_id', $gameId, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Archive a game only if it was created by the given user.
+     * Returns true if archived, false if not found, already archived, or wrong creator.
+     */
+    public function archiveGameOwnedBy(int $gameId, int $userId): bool
+    {
+        $stmt = $this->db->pdo()->prepare(
+            'UPDATE games SET archived_at = CURRENT_TIMESTAMP
+             WHERE id = :game_id AND created_by_user_id = :user_id AND archived_at IS NULL'
+        );
+        $stmt->bindValue(':game_id', $gameId, \PDO::PARAM_INT);
+        $stmt->bindValue(':user_id', $userId, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->rowCount() > 0;
+    }
+
     public function listGamesForUser(int $userId, int $limit = 200): array
     {
         $sql = 'SELECT g.id, g.status, g.target_score, g.ruleset, g.dealer_seat, g.current_phase, g.current_turn_seat, g.hand_number, g.created_by_user_id, g.created_at, g.updated_at
                 FROM games g
                 INNER JOIN game_players gp ON gp.game_id = g.id
                 WHERE gp.user_id = :user_id
+                  AND g.archived_at IS NULL
                 ORDER BY g.id DESC
                 LIMIT :limit';
         $stmt = $this->db->pdo()->prepare($sql);
@@ -202,6 +412,27 @@ class GameRepository
         $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
         $stmt->execute();
 
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Return all seats (with usernames) for a set of game IDs in one query.
+     * Result is a flat array; callers group by game_id.
+     */
+    public function listPlayersWithUsernamesForGames(array $gameIds): array
+    {
+        if (empty($gameIds)) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($gameIds), '?'));
+        $sql = "SELECT gp.game_id, gp.seat, gp.user_id, gp.is_ai, gp.team,
+                       u.username, COALESCE(u.nickname, u.username) AS display_name, u.avatar_code
+                FROM game_players gp
+                LEFT JOIN users u ON u.id = gp.user_id
+                WHERE gp.game_id IN ({$placeholders})
+                ORDER BY gp.game_id, gp.seat";
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(array_values($gameIds));
         return $stmt->fetchAll();
     }
 
@@ -284,6 +515,7 @@ class GameRepository
                     GROUP BY game_id
                 ) open_slots ON open_slots.game_id = g.id
                 WHERE g.status IN ("lobby", "active")
+                  AND g.archived_at IS NULL
                   AND (invited.seat IS NOT NULL OR COALESCE(open_slots.open_human_seats, 0) > 0)
                 ORDER BY g.id DESC
                 LIMIT :limit';
@@ -292,6 +524,31 @@ class GameRepository
         $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
         $stmt->execute();
 
+        return $stmt->fetchAll();
+    }
+
+    public function listUsersForLobby(int $userId): array
+    {
+        $sql = "SELECT u.id,
+                       u.username,
+                       COALESCE(u.nickname, u.username) AS display_name,
+                       u.email,
+                       CASE WHEN co.user_id IS NOT NULL THEN 1 ELSE 0 END AS recently_played
+                FROM users u
+                LEFT JOIN (
+                    SELECT DISTINCT gp2.user_id
+                    FROM game_players gp1
+                    INNER JOIN game_players gp2 ON gp2.game_id = gp1.game_id
+                    WHERE gp1.user_id = :uid
+                      AND gp2.user_id != :uid
+                      AND gp2.user_id IS NOT NULL
+                      AND gp2.is_ai = 0
+                ) co ON co.user_id = u.id
+                WHERE u.id != :uid
+                ORDER BY recently_played DESC, LOWER(COALESCE(u.nickname, u.username)) ASC";
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->bindValue(':uid', $userId, \PDO::PARAM_INT);
+        $stmt->execute();
         return $stmt->fetchAll();
     }
 
@@ -326,10 +583,12 @@ class GameRepository
 
     public function listPlayers(int $gameId): array
     {
-        $sql = 'SELECT seat, user_id, is_ai, team, connected
-                FROM game_players
-                WHERE game_id = :game_id
-                ORDER BY seat ASC';
+        $sql = 'SELECT gp.seat, gp.user_id, gp.is_ai, gp.team, gp.connected,
+                       u.username, COALESCE(u.nickname, u.username) AS display_name, u.avatar_code
+                FROM game_players gp
+                LEFT JOIN users u ON u.id = gp.user_id
+                WHERE gp.game_id = :game_id
+                ORDER BY gp.seat ASC';
         $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute(['game_id' => $gameId]);
 
@@ -338,14 +597,32 @@ class GameRepository
 
     public function listEventsAfter(int $gameId, int $afterSeq, int $limit = 100): array
     {
-        $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
-                FROM game_events
-                WHERE game_id = :game_id AND seq_no > :after_seq
-                ORDER BY seq_no ASC
-                LIMIT :limit';
+        // When afterSeq=0 (full refresh), return the MOST RECENT $limit events so the
+        // current hand's hand_dealt is always included, regardless of total game length.
+        // Sub-select orders DESC to get the tail, then outer query re-sorts ASC for the client.
+        if ($afterSeq === 0) {
+            $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                    FROM (
+                        SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                        FROM game_events
+                        WHERE game_id = :game_id
+                        ORDER BY seq_no DESC
+                        LIMIT :limit
+                    ) t
+                    ORDER BY seq_no ASC';
+        } else {
+            $sql = 'SELECT seq_no, event_type, actor_seat, payload_json, created_at
+                    FROM game_events
+                    WHERE game_id = :game_id AND seq_no > :after_seq
+                    ORDER BY seq_no ASC
+                    LIMIT :limit';
+        }
+
         $stmt = $this->db->pdo()->prepare($sql);
         $stmt->bindValue(':game_id', $gameId, \PDO::PARAM_INT);
-        $stmt->bindValue(':after_seq', $afterSeq, \PDO::PARAM_INT);
+        if ($afterSeq !== 0) {
+            $stmt->bindValue(':after_seq', $afterSeq, \PDO::PARAM_INT);
+        }
         $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
         $stmt->execute();
 
@@ -529,31 +806,40 @@ class GameRepository
 
     public function bidSummary(int $gameId): array
     {
+        // Only count bids from the current hand — find the seq_no of the most
+        // recent hand_dealt event and ignore anything before it.
+        $dealSql  = 'SELECT MAX(seq_no) FROM game_events
+                     WHERE game_id = :game_id AND event_type = :event_type';
+        $dealStmt = $this->db->pdo()->prepare($dealSql);
+        $dealStmt->execute(['game_id' => $gameId, 'event_type' => 'hand_dealt']);
+        $afterSeq = (int) ($dealStmt->fetchColumn() ?: 0);
+
         $sql = 'SELECT actor_seat, payload_json
                 FROM game_events
-                WHERE game_id = :game_id AND event_type = :event_type
+                WHERE game_id = :game_id AND event_type = :event_type AND seq_no > :after_seq
                 ORDER BY seq_no ASC';
         $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute([
-            'game_id' => $gameId,
+            'game_id'    => $gameId,
             'event_type' => 'bid_action',
+            'after_seq'  => $afterSeq,
         ]);
         $rows = $stmt->fetchAll();
 
-        $highestBid = 0;
+        $highestBid  = 0;
         $highestSeat = null;
         foreach ($rows as $row) {
             $payload = json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR);
             $bid = $payload['bid'] ?? null;
-            if (is_int($bid) && $bid > $highestBid) {
-                $highestBid = $bid;
+            if (is_int($bid) && $bid >= $highestBid) {
+                $highestBid  = $bid;
                 $highestSeat = (int) $row['actor_seat'];
             }
         }
 
         return [
-            'count' => count($rows),
-            'highest_bid' => $highestBid,
+            'count'        => count($rows),
+            'highest_bid'  => $highestBid,
             'highest_seat' => $highestSeat,
         ];
     }
@@ -649,6 +935,18 @@ class GameRepository
     // -------------------------------------------------------------------------
     // 6-player / deck-remaining helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Return the seat numbers of all AI players in a game.
+     * @return int[]
+     */
+    public function getAiSeats(int $gameId): array
+    {
+        $sql = 'SELECT seat FROM game_players WHERE game_id = :game_id AND is_ai = 1 ORDER BY seat ASC';
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute(['game_id' => $gameId]);
+        return array_map('intval', array_column($stmt->fetchAll(), 'seat'));
+    }
 
     public function getPlayerCount(int $gameId): int
     {

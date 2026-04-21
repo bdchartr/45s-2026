@@ -26,10 +26,10 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 $app = AppFactory::create();
-$app->setBasePath((string) ($config['base_path'] ?? '/45s'));
+$app->setBasePath((string) ($config['base_path'] ?? '/45'));
 $app->addBodyParsingMiddleware();
 $app->addRoutingMiddleware();
 
-Routes::register($app);
+Routes::register($app, $config);
 
 $app->run();
