@@ -1347,6 +1347,8 @@
       basePath: '/45',
       nextPath: null,
       lobbyUsers: [],
+      lobbyRefreshing: false,
+      lobbyNeedsRefresh: false,
     };
 
     window.APP_BASE_PATH  = '/45';
@@ -2197,6 +2199,9 @@
 
     async function refreshLobby() {
       if (!state.userId) { clearGameSections(); byId('adminPanel').style.display = 'none'; return; }
+      if (state.lobbyRefreshing) { state.lobbyNeedsRefresh = true; return; }
+      state.lobbyRefreshing = true;
+      state.lobbyNeedsRefresh = false;
 
       try {
         const requests = [
@@ -2248,6 +2253,9 @@
 
       } catch (err) {
         setLobbyStatus('Could not load games: ' + err.message, 'error');
+      } finally {
+        state.lobbyRefreshing = false;
+        if (state.lobbyNeedsRefresh) refreshLobby();
       }
     }
 

@@ -1092,6 +1092,9 @@
       viewerHand: [],
       selectedDiscards: [],  // card codes selected for discard
       pollingId: null,
+      refreshing: false,
+      needsRefresh: false,
+      actionInProgress: false,
       renderedTrickCards: { north: null, south: null, west: null, east: null },
       trickAnimation: null,
       trickAnimationTimers: [],
@@ -1547,6 +1550,14 @@
     function renderBoardOverlay() {
       const overlay = byId('boardActionOverlay');
       if (!overlay) return;
+
+      // While an action is in-flight, hide the overlay so buttons can't be
+      // clicked again and re-renders don't expose stale buttons.
+      if (app.actionInProgress) {
+        overlay.style.display = 'none';
+        return;
+      }
+
       const g = app.state || {};
       const phase = String(g.current_phase || '');
       const seated = Number.isInteger(app.viewerSeat);
@@ -1598,7 +1609,7 @@
         card.appendChild(btns);
         overlay.appendChild(card);
 
-      } else if (phase === 'discard_phase' && seated) {
+      } else if (phase === 'discard_phase' && seated && !viewerHasDiscarded()) {
         show = true;
         const nSel = app.selectedDiscards.length;
         const hintText = nSel === 0
@@ -1642,7 +1653,16 @@
 
       el.innerHTML = '';
       if (phaseName) el.appendChild(mk('div', 'sp-phase', phaseName));
-      if (myTurn && phase === 'trick_play') {
+
+      if (phase === 'discard_phase' && seated) {
+        // current_turn_seat is the bid winner as a reference, not a turn indicator.
+        // Use the viewer's own discard event to determine their status.
+        if (viewerHasDiscarded()) {
+          el.appendChild(mk('div', 'sp-turn', 'Discard submitted — waiting for others…'));
+        } else {
+          el.appendChild(mk('div', 'sp-turn your-turn', 'Select cards to discard, then confirm'));
+        }
+      } else if (myTurn && phase === 'trick_play') {
         el.appendChild(mk('div', 'sp-turn your-turn', 'Play a card from your hand'));
       } else if (myTurn) {
         el.appendChild(mk('div', 'sp-turn your-turn', 'Your turn'));
@@ -1831,7 +1851,7 @@
       const isViewer = seat !== null && Number(seat) === Number(app.viewerSeat);
 
       // Discard phase: viewer can always submit (turn order bypassed server-side)
-      const canDiscard  = isViewer && phase === 'discard_phase';
+      const canDiscard  = isViewer && phase === 'discard_phase' && !viewerHasDiscarded();
       const canPlay     = isViewer && phase === 'trick_play' && isTurn;
 
       zone.className = 'player-zone zone-' + side + (isDealer ? ' dealer' : '') + (isTurn ? ' turn' : '');
@@ -2072,6 +2092,18 @@
         if (e.event_type === 'trump_declared') { trumpDeclared = true; break; }
       }
       return trumpDeclared ? null : { faceDown: true };
+    }
+
+    function viewerHasDiscarded() {
+      if (app.viewerSeat === null) return false;
+      for (let i = 0; i < app.events.length; i++) {
+        const e = app.events[i];
+        if ((e.event_type === 'discard_action' || e.event_type === 'dealer_draw_discard')
+            && Number(e.actor_seat) === Number(app.viewerSeat)) {
+          return true;
+        }
+      }
+      return false;
     }
 
     function hasEventType(name) {
@@ -2341,6 +2373,9 @@
     }
 
     async function refreshAll() {
+      if (app.refreshing) { app.needsRefresh = true; return; }
+      app.refreshing = true;
+      app.needsRefresh = false;
       try {
         const previousMaxSeq = app.maxEventSeq || 0;
         const me = await api('/api/auth/me');
@@ -2396,14 +2431,20 @@
         }
       } catch (err) {
         status('Refresh failed: ' + err.message, 'error');
+      } finally {
+        app.refreshing = false;
+        if (app.needsRefresh) refreshAll();
       }
     }
 
     async function submitBid(rawBid) {
+      if (app.actionInProgress) return;
       if (!Number.isInteger(app.viewerSeat)) {
         status('Join the game before bidding.', 'error');
         return;
       }
+      app.actionInProgress = true;
+      renderBoardOverlay();
       try {
         status('Submitting bid...', '');
         const bid = rawBid === 'pass' ? 'pass' : Number(rawBid);
@@ -2416,6 +2457,8 @@
         await refreshAll();
       } catch (err) {
         status('Bid failed: ' + err.message, 'error');
+      } finally {
+        app.actionInProgress = false;
       }
     }
 
@@ -2673,11 +2716,13 @@
     }
 
     async function playCard(code) {
+      if (app.actionInProgress) return;
       if (!Number.isInteger(app.viewerSeat)) {
         status('Join the game before playing.', 'error');
         return;
       }
       if (!code) return;
+      app.actionInProgress = true;
       let flyEl = null;
       try {
         // Capture hand chip position before removing it
@@ -2722,6 +2767,8 @@
           renderPlayerZone('south');
         }
         status('Play failed: ' + err.message, 'error');
+      } finally {
+        app.actionInProgress = false;
       }
     }
 
@@ -2741,10 +2788,13 @@
     }
 
     async function discardCards() {
+      if (app.actionInProgress) return;
       if (!Number.isInteger(app.viewerSeat)) {
         status('Not seated.', 'error');
         return;
       }
+      app.actionInProgress = true;
+      renderBoardOverlay();
       try {
         const cards = app.selectedDiscards.slice();
         status('Discarding ' + cards.length + ' card(s)…', '');
@@ -2758,11 +2808,16 @@
         await refreshAll();
       } catch (err) {
         status('Discard failed: ' + err.message, 'error');
+      } finally {
+        app.actionInProgress = false;
       }
     }
 
     async function declareTrump(trump) {
+      if (app.actionInProgress) return;
       if (!Number.isInteger(app.viewerSeat)) return;
+      app.actionInProgress = true;
+      renderBoardOverlay();
       try {
         status('Declaring ' + SUIT_NAME[trump] + '…', '');
         await api('/api/game/declare_trump', 'POST', {
@@ -2774,6 +2829,8 @@
         await refreshAll();
       } catch (err) {
         status('Trump failed: ' + err.message, 'error');
+      } finally {
+        app.actionInProgress = false;
       }
     }
 
