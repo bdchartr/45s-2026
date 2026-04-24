@@ -1155,15 +1155,18 @@
         '<span class="c-suit">' + sym + '</span>' +
         '</div>';
     }
-
-    /** Build a table card (larger, center of board) HTML string */
-    function tableCardHtml(code, trump) {
-      const s   = suitOf(code);
-      const red = isRedSuit(s) ? ' red' : '';
-      const rank = rankOf(code);
-      const sym  = SUIT_SYM[s] || s;
-      return '<span class="c-rank">' + rank + '</span>' +
-        '<span class="c-suit">' + sym + '</span>';
+    function cardChipEl(code, trump, extra) {
+      const cls = ('card-chip ' + cardClasses(code, trump, extra)).trim();
+      const e = document.createElement('div');
+      e.className = cls;
+      e.dataset.card = code;
+      e.appendChild(mk('span', 'c-rank', rankOf(code)));
+      e.appendChild(mk('span', 'c-suit', SUIT_SYM[suitOf(code)] || suitOf(code)));
+      return e;
+    }
+    function appendTableCard(el, code) {
+      el.appendChild(mk('span', 'c-rank', rankOf(code)));
+      el.appendChild(mk('span', 'c-suit', SUIT_SYM[suitOf(code)] || suitOf(code)));
     }
 
     function getTableCardMetrics() {
@@ -1431,10 +1434,18 @@
         ? bidderName + ' made ' + bidLabel
         : bidderName + ' lost the ' + bidLabel + ' bid';
 
-      const fmtDelta = (d) => d >= 0 ? '<span class="delta-pos">+' + d + '</span>' : '<span class="delta-neg">' + d + '</span>';
-      const team0Line = teamLabel(0) + ': ' + fmtDelta(d0) + ' → ' + t0 + '/' + target;
-      const team1Line = teamLabel(1) + ': ' + fmtDelta(d1) + ' → ' + t1 + '/' + target;
-      scoresEl.innerHTML = team0Line + '<br>' + team1Line;
+      const makeScoreLine = function(label, d, total, tgt) {
+        const line = document.createElement('span');
+        line.appendChild(document.createTextNode(label + ': '));
+        const delta = mk('span', d >= 0 ? 'delta-pos' : 'delta-neg', (d >= 0 ? '+' : '') + d);
+        line.appendChild(delta);
+        line.appendChild(document.createTextNode(' → ' + total + '/' + tgt));
+        return line;
+      };
+      scoresEl.innerHTML = '';
+      scoresEl.appendChild(makeScoreLine(teamLabel(0), d0, t0, target));
+      scoresEl.appendChild(document.createElement('br'));
+      scoresEl.appendChild(makeScoreLine(teamLabel(1), d1, t1, target));
 
       overlay.style.display = '';
       if (handResultTimer) clearTimeout(handResultTimer);
@@ -1541,54 +1552,72 @@
       const seated = Number.isInteger(app.viewerSeat);
       const myTurn = seated && Number(g.current_turn_seat) === Number(app.viewerSeat);
 
-      let html = '';
+      overlay.innerHTML = '';
       let show = false;
 
       if (phase === 'bidding' && myTurn) {
         show = true;
-        const high   = currentHighBid();
+        const high = currentHighBid();
         const isDealer = Number(g.dealer_seat) === Number(app.viewerSeat);
-        const hint = high > 0
+        const hintText = high > 0
           ? 'Current high: ' + high + (isDealer ? ' — match to steal, or raise' : ' — bid higher or pass')
           : 'Opening bid';
-        html += '<div class="boa-title">Your Bid</div>';
-        html += '<div class="boa-hint">' + hint + '</div>';
-        html += '<div class="boa-btns">';
-        html += '<button class="pass-btn" onclick="submitBid(\'pass\')">Pass</button>';
+        const card = mk('div', 'boa-card');
+        card.appendChild(mk('div', 'boa-title', 'Your Bid'));
+        card.appendChild(mk('div', 'boa-hint', hintText));
+        const btns = mk('div', 'boa-btns');
+        const passBtn = mk('button', 'pass-btn', 'Pass');
+        passBtn.onclick = function() { submitBid('pass'); };
+        btns.appendChild(passBtn);
         BID_LADDER.forEach(function(b) {
-          // Disable bids strictly below current high (dealer may match; others cannot)
           var tooLow = high > 0 && (isDealer ? b < high : b <= high);
-          var label  = b === 60 ? '30-for-60' : String(b);
-          html += '<button' + (tooLow ? ' disabled' : '') + ' onclick="submitBid(' + b + ')">' + label + '</button>';
+          var label = b === 60 ? '30-for-60' : String(b);
+          var btn = mk('button', null, label);
+          if (tooLow) btn.disabled = true;
+          btn.onclick = (function(bid) { return function() { submitBid(bid); }; })(b);
+          btns.appendChild(btn);
         });
-        html += '</div>';
+        card.appendChild(btns);
+        overlay.appendChild(card);
 
       } else if (phase === 'declare_trump' && myTurn) {
         show = true;
         const h = app.hand || {};
         const bidLabel = h.bid_value ? (h.bid_value === 60 ? '30-for-60' : h.bid_value) : '';
-        html += '<div class="boa-title">Choose Trump</div>';
-        html += '<div class="boa-hint">' + (bidLabel ? 'You bid ' + bidLabel : 'You won the bid') + '</div>';
-        html += '<div class="boa-btns">';
-        html += '<button class="trump-btn-c" onclick="declareTrump(\'C\')">♣ Clubs</button>';
-        html += '<button class="trump-btn-d" onclick="declareTrump(\'D\')">♦ Diamonds</button>';
-        html += '<button class="trump-btn-h" onclick="declareTrump(\'H\')">♥ Hearts</button>';
-        html += '<button class="trump-btn-s" onclick="declareTrump(\'S\')">♠ Spades</button>';
-        html += '</div>';
+        const hintText = bidLabel ? 'You bid ' + bidLabel : 'You won the bid';
+        const card = mk('div', 'boa-card');
+        card.appendChild(mk('div', 'boa-title', 'Choose Trump'));
+        card.appendChild(mk('div', 'boa-hint', hintText));
+        const btns = mk('div', 'boa-btns');
+        [['C', '♣ Clubs', 'trump-btn-c'], ['D', '♦ Diamonds', 'trump-btn-d'],
+         ['H', '♥ Hearts', 'trump-btn-h'], ['S', '♠ Spades', 'trump-btn-s']].forEach(function(t) {
+          var btn = mk('button', t[2], t[1]);
+          btn.onclick = (function(suit) { return function() { declareTrump(suit); }; })(t[0]);
+          btns.appendChild(btn);
+        });
+        card.appendChild(btns);
+        overlay.appendChild(card);
 
       } else if (phase === 'discard_phase' && seated) {
         show = true;
         const nSel = app.selectedDiscards.length;
-        const hint = nSel === 0
+        const hintText = nSel === 0
           ? 'Select cards in your hand to discard, then confirm'
           : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — or confirm to keep all';
-        html += '<div class="boa-title">Discard</div>';
-        html += '<div class="boa-hint" id="discardHint">' + hint + '</div>';
-        html += '<div class="boa-btns"><button onclick="discardCards()">Confirm Discard</button></div>';
+        const card = mk('div', 'boa-card');
+        card.appendChild(mk('div', 'boa-title', 'Discard'));
+        const hintEl = mk('div', 'boa-hint', hintText);
+        hintEl.id = 'discardHint';
+        card.appendChild(hintEl);
+        const btns = mk('div', 'boa-btns');
+        const confirmBtn = mk('button', null, 'Confirm Discard');
+        confirmBtn.onclick = discardCards;
+        btns.appendChild(confirmBtn);
+        card.appendChild(btns);
+        overlay.appendChild(card);
       }
 
       overlay.style.display = show ? '' : 'none';
-      if (show) overlay.innerHTML = '<div class="boa-card">' + html + '</div>';
     }
 
     // -------------------------------------------------------------------------
@@ -1611,16 +1640,15 @@
       const turnSeat = g.current_turn_seat != null ? Number(g.current_turn_seat) : null;
       const phaseName = phaseNames[phase] || (phase ? phase.replace(/_/g, ' ') : null);
 
-      let html = '';
-      if (phaseName) html += '<div class="sp-phase">' + phaseName + '</div>';
+      el.innerHTML = '';
+      if (phaseName) el.appendChild(mk('div', 'sp-phase', phaseName));
       if (myTurn && phase === 'trick_play') {
-        html += '<div class="sp-turn your-turn">Play a card from your hand</div>';
+        el.appendChild(mk('div', 'sp-turn your-turn', 'Play a card from your hand'));
       } else if (myTurn) {
-        html += '<div class="sp-turn your-turn">Your turn</div>';
+        el.appendChild(mk('div', 'sp-turn your-turn', 'Your turn'));
       } else if (turnSeat !== null && phase) {
-        html += '<div class="sp-turn">Waiting for ' + seatDisplayName(turnSeat) + '…</div>';
+        el.appendChild(mk('div', 'sp-turn', 'Waiting for ' + seatDisplayName(turnSeat) + '…'));
       }
-      el.innerHTML = html;
     }
 
     // -------------------------------------------------------------------------
@@ -1634,19 +1662,25 @@
       const sc = app.scores || {};
       const phase = String(g.current_phase || '');
 
-      const pills = [];
+      bar.innerHTML = '';
 
       // Trump
       const trump = h.trump_suit || null;
       if (trump) {
         const sym = SUIT_SYM[trump] || trump;
         const red = isRedSuit(trump) ? 'color:#b91c1c' : 'color:#1a1f25';
-        pills.push('<div class="info-pill trump-pill">' +
-          '<span class="label">Trump</span>' +
-          '<span style="font-size:16px;' + red + '">' + sym + '</span> ' +
-          SUIT_NAME[trump] + '</div>');
+        const pill = mk('div', 'info-pill trump-pill');
+        pill.appendChild(mk('span', 'label', 'Trump'));
+        const symSpan = mk('span', null, sym);
+        symSpan.style.cssText = 'font-size:16px;' + red;
+        pill.appendChild(symSpan);
+        pill.appendChild(document.createTextNode(' ' + SUIT_NAME[trump]));
+        bar.appendChild(pill);
       } else if (phase === 'bidding' || phase === 'declare_trump') {
-        pills.push('<div class="info-pill"><span class="label">Trump</span>TBD</div>');
+        const pill = mk('div', 'info-pill');
+        pill.appendChild(mk('span', 'label', 'Trump'));
+        pill.appendChild(document.createTextNode('TBD'));
+        bar.appendChild(pill);
       }
 
       // Contract
@@ -1654,7 +1688,10 @@
       const bidValue  = h.bid_value != null ? Number(h.bid_value) : null;
       if (bidWinner !== null && bidValue !== null) {
         const label = bidValue === 60 ? '30-for-60' : String(bidValue);
-        pills.push('<div class="info-pill"><span class="label">Contract</span>' + seatDisplayName(bidWinner) + ' — ' + label + '</div>');
+        const pill = mk('div', 'info-pill');
+        pill.appendChild(mk('span', 'label', 'Contract'));
+        pill.appendChild(document.createTextNode(seatDisplayName(bidWinner) + ' — ' + label));
+        bar.appendChild(pill);
       }
 
       // Scores — show team member names instead of "Team 0 (0,2)"
@@ -1664,30 +1701,39 @@
       const s1 = Number(sc.team1_sets  ?? 0);
       const target = Number(g.target_score || 120);
 
-      const t0cls = s0 >= 2 ? ' set-warn' : '';
-      const t1cls = s1 >= 2 ? ' set-warn' : '';
-      pills.push('<div class="info-pill' + t0cls + '"><span class="label">' + teamLabel(0) + '</span>' +
-        t0 + '/' + target + (s0 > 0 ? ' · ' + s0 + ' set' + (s0 > 1 ? 's' : '') : '') + '</div>');
-      pills.push('<div class="info-pill' + t1cls + '"><span class="label">' + teamLabel(1) + '</span>' +
-        t1 + '/' + target + (s1 > 0 ? ' · ' + s1 + ' set' + (s1 > 1 ? 's' : '') : '') + '</div>');
+      const makeScorePill = function(teamNum, total, sets, extraCls) {
+        const pill = mk('div', 'info-pill' + extraCls);
+        pill.appendChild(mk('span', 'label', teamLabel(teamNum)));
+        const scoreText = total + '/' + target + (sets > 0 ? ' · ' + sets + ' set' + (sets > 1 ? 's' : '') : '');
+        pill.appendChild(document.createTextNode(scoreText));
+        return pill;
+      };
+      bar.appendChild(makeScorePill(0, t0, s0, s0 >= 2 ? ' set-warn' : ''));
+      bar.appendChild(makeScorePill(1, t1, s1, s1 >= 2 ? ' set-warn' : ''));
 
       // Hand / trick progress
       const hand = Number(g.hand_number || 1);
       const cardPlays = app.events.filter(function (e) { return e.event_type === 'card_played'; }).length;
       const completedTricks = Math.floor(cardPlays / 4);
+      const handPill = mk('div', 'info-pill');
+      handPill.appendChild(mk('span', 'label', 'Hand'));
       if (phase === 'trick_play') {
-        pills.push('<div class="info-pill"><span class="label">Hand</span>' + hand +
-          ' · Trick ' + (completedTricks + 1) + '/5</div>');
+        handPill.appendChild(document.createTextNode(hand + ' · Trick ' + (completedTricks + 1) + '/5'));
       } else {
-        pills.push('<div class="info-pill"><span class="label">Hand</span>' + hand + '</div>');
+        handPill.appendChild(document.createTextNode(String(hand)));
       }
-
-      bar.innerHTML = pills.join('');
+      bar.appendChild(handPill);
     }
 
     // -------------------------------------------------------------------------
 
     function byId(id) { return document.getElementById(id); }
+    function mk(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = String(text);
+      return e;
+    }
 
     function seatName(seat) {
       const n = Number(seat);
@@ -1700,11 +1746,6 @@
       el.className = 'status' + (level === 'error' ? ' error' : level === 'success' ? ' success' : '');
     }
 
-    function statusHtml(html, level) {
-      const el = byId('actionStatus');
-      el.innerHTML = html || '';
-      el.className = 'status' + (level === 'error' ? ' error' : level === 'success' ? ' success' : '');
-    }
 
     function jsonHeaders(withCsrf) {
       const h = { 'Content-Type': 'application/json' };
@@ -1766,10 +1807,16 @@
       return 'Open Seat';
     }
 
-    function playerNameHtml(p) {
+    function playerNameEl(p) {
       const name = displayNameForPlayer(p);
-      if (!p || !p.user_id || Number(p.is_ai) === 1) return name;
-      return '<span style="cursor:pointer;text-decoration:underline;text-underline-offset:2px" onclick="openPlayerModal(' + Number(p.user_id) + ')">' + name + '</span>';
+      if (!p || !p.user_id || Number(p.is_ai) === 1) {
+        return document.createTextNode(name);
+      }
+      const span = document.createElement('span');
+      span.style.cssText = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px';
+      span.textContent = name;
+      span.addEventListener('click', (function(uid) { return function() { openPlayerModal(uid); }; })(Number(p.user_id)));
+      return span;
     }
 
     function renderPlayerZone(side) {
@@ -1796,41 +1843,19 @@
         if (Number(p.connected) !== 1) statusBits.push('disconnected');
       }
 
-      let handHtml = '';
-      if (isViewer) {
-        if (Array.isArray(app.viewerHand) && app.viewerHand.length > 0) {
-          for (let i = 0; i < app.viewerHand.length; i++) {
-            const code = app.viewerHand[i];
-            const isSelected = app.selectedDiscards.indexOf(code) !== -1;
-            const extra = [];
-            if (canDiscard || canPlay) extra.push('playable');
-            if (isSelected) extra.push('selected');
-            handHtml += cardChipHtml(code, trump, extra);
-          }
-        } else {
-          handHtml = '<div class="card-chip back"></div>';
-        }
-      } else {
-        const handCounts = deriveHandCounts();
-        const cardCount = seat !== null && handCounts[seat] !== undefined ? handCounts[seat] : 5;
-        for (let i = 0; i < cardCount; i++) {
-          handHtml += '<div class="card-chip back"></div>';
-        }
-      }
-
-      // Bid badge — only visible during bidding and declare_trump phases
-      var bidBadgeHtml = '';
+      // Bid badge element — only visible during bidding and declare_trump phases
+      var bidBadgeEl = null;
       var currentPhase = String(g.current_phase || '');
       if ((currentPhase === 'bidding' || currentPhase === 'declare_trump') && seat !== null) {
         var bidStatus = deriveBidStatus();
         if (bidStatus[seat]) {
           var bs = bidStatus[seat];
-          bidBadgeHtml = '<div class="bid-badge ' + bs.cls + '">Bid: ' + bs.bid + '</div>';
+          bidBadgeEl = mk('div', 'bid-badge ' + bs.cls, 'Bid: ' + String(bs.bid));
         }
       }
 
-      // Turn indicator — shown on table-facing edge of the zone when it's this player's turn
-      var turnHtml = '';
+      // Turn indicator element
+      var turnEl = null;
       if (isTurn) {
         var arrowIn = { north: '▼', south: '▲', west: '▶', east: '◀' }[side] || '▶';
         var phaseLabel = {
@@ -1839,16 +1864,56 @@
           discard_phase: 'Discard',
           trick_play: 'Play'
         }[phase] || 'Turn';
-        turnHtml = '<div class="turn-indicator">' + arrowIn + ' ' + phaseLabel + ' ' + arrowIn + '</div>';
+        turnEl = mk('div', 'turn-indicator', arrowIn + ' ' + phaseLabel + ' ' + arrowIn);
       }
 
       const dealMasked = app.dealMaskedSides && app.dealMaskedSides.has(side);
-      zone.innerHTML =
-        '<div class="player-name">' + playerNameHtml(p) + ' <span style="font-weight:400;color:var(--muted);font-size:12px">Seat ' + seat + '</span></div>' +
-        '<div class="player-meta">' + (statusBits.length ? statusBits.join(' · ') : '&nbsp;') + '</div>' +
-        '<div class="hand" id="hand-' + side + '"' + (dealMasked ? ' style="opacity:0"' : '') + '>' + handHtml + '</div>' +
-        bidBadgeHtml +
-        turnHtml;
+
+      zone.innerHTML = '';
+
+      // Player name row
+      const nameDiv = mk('div', 'player-name');
+      nameDiv.appendChild(playerNameEl(p));
+      nameDiv.appendChild(document.createTextNode(' '));
+      const seatSpan = mk('span', null, 'Seat ' + seat);
+      seatSpan.style.cssText = 'font-weight:400;color:var(--muted);font-size:12px';
+      nameDiv.appendChild(seatSpan);
+      zone.appendChild(nameDiv);
+
+      // Meta row
+      const metaDiv = mk('div', 'player-meta');
+      metaDiv.textContent = statusBits.length ? statusBits.join(' · ') : ' ';
+      zone.appendChild(metaDiv);
+
+      // Hand
+      const handDiv = document.createElement('div');
+      handDiv.className = 'hand';
+      handDiv.id = 'hand-' + side;
+      if (dealMasked) handDiv.style.opacity = '0';
+      if (isViewer) {
+        if (Array.isArray(app.viewerHand) && app.viewerHand.length > 0) {
+          for (let i = 0; i < app.viewerHand.length; i++) {
+            const code = app.viewerHand[i];
+            const isSelected = app.selectedDiscards.indexOf(code) !== -1;
+            const extra = [];
+            if (canDiscard || canPlay) extra.push('playable');
+            if (isSelected) extra.push('selected');
+            handDiv.appendChild(cardChipEl(code, trump, extra));
+          }
+        } else {
+          handDiv.appendChild(mk('div', 'card-chip back'));
+        }
+      } else {
+        const handCounts = deriveHandCounts();
+        const cardCount = seat !== null && handCounts[seat] !== undefined ? handCounts[seat] : 5;
+        for (let i = 0; i < cardCount; i++) {
+          handDiv.appendChild(mk('div', 'card-chip back'));
+        }
+      }
+      zone.appendChild(handDiv);
+
+      if (bidBadgeEl) zone.appendChild(bidBadgeEl);
+      if (turnEl) zone.appendChild(turnEl);
 
       // Attach card click listeners for the viewer's zone
       if (isViewer) {
@@ -2123,11 +2188,9 @@
       container.innerHTML = '';
 
       rows.forEach(function (r) {
-        const row = document.createElement('div');
-        row.className = 'flow-row';
-        row.innerHTML =
-          '<div class="flow-step">' + r.label + '</div>' +
-          '<div class="flow-state ' + r.state + '">' + r.detail + '</div>';
+        const row = mk('div', 'flow-row');
+        row.appendChild(mk('div', 'flow-step', r.label));
+        row.appendChild(mk('div', 'flow-state ' + r.state, r.detail));
         container.appendChild(row);
       });
     }
@@ -2164,7 +2227,7 @@
         const redCls = isRedSuit(suitOf(card)) ? ' red' : '';
         el.className = 'table-card card-' + side + redCls;
         el.dataset.trickSide = side;
-        el.innerHTML = tableCardHtml(card, trump);
+        appendTableCard(el, card);
         center.appendChild(el);
       });
 
@@ -2173,14 +2236,15 @@
       const kittyState = deriveKittyCards();
       if (kittyState) {
         if (!existingKitty) {
-          const kd = document.createElement('div');
-          kd.className = 'kitty-display';
-          var kHtml = '<div class="kitty-label">Kitty</div><div class="kitty-cards">';
+          const kd = mk('div', 'kitty-display');
+          kd.appendChild(mk('div', 'kitty-label', 'Kitty'));
+          const kittyCards = mk('div', 'kitty-cards');
           for (var ki = 0; ki < 3; ki++) {
-            kHtml += '<div class="card-chip back" style="animation-delay:' + (ki * 80) + 'ms"></div>';
+            var back = mk('div', 'card-chip back');
+            back.style.animationDelay = (ki * 80) + 'ms';
+            kittyCards.appendChild(back);
           }
-          kHtml += '</div>';
-          kd.innerHTML = kHtml;
+          kd.appendChild(kittyCards);
           center.appendChild(kd);
         }
         label.textContent = '';
@@ -2213,7 +2277,7 @@
 
       const recent = app.events.slice(-60);
       if (recent.length === 0) {
-        log.innerHTML = '<div class="log-line muted">No events yet.</div>';
+        log.appendChild(mk('div', 'log-line muted', 'No events yet.'));
         return;
       }
 
@@ -2287,7 +2351,17 @@
 
         if (!me.authenticated) {
           const backTo = encodeURIComponent('/45/game.html?game_id=' + app.gameId);
-          statusHtml('You are not signed in. <a href="/45/lobby.html?next=' + backTo + '">Sign in to continue</a>.', 'error');
+          (function() {
+            const statusEl = byId('actionStatus');
+            statusEl.innerHTML = '';
+            statusEl.appendChild(document.createTextNode('You are not signed in. '));
+            const a = document.createElement('a');
+            a.href = '/45/lobby.html?next=' + backTo;
+            a.textContent = 'Sign in to continue';
+            statusEl.appendChild(a);
+            statusEl.appendChild(document.createTextNode('.'));
+            statusEl.className = 'status error';
+          })();
           app.state = {};
           app.players = [];
           app.events = [];
@@ -2565,7 +2639,7 @@
 
       var fly = document.createElement('div');
       fly.className = 'table-card fly-card' + (isRedSuit(suitOf(code)) ? ' red' : '');
-      fly.innerHTML = tableCardHtml(code, trump);
+      appendTableCard(fly, code);
       fly.style.cssText =
         'left:' + startLeft + 'px;' +
         'top:'  + startTop  + 'px;' +

@@ -1354,6 +1354,12 @@
     window.APP_USER_ID    = null;
 
     function byId(id) { return document.getElementById(id); }
+    function mk(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = String(text);
+      return e;
+    }
 
     function jsonHeaders(withCsrf = false) {
       const h = { 'Content-Type': 'application/json' };
@@ -1586,12 +1592,15 @@
 
       if (isLoggedIn) {
         const name = state.displayName || state.username || 'User #' + state.userId;
-        const roleSuffix = (state.role && state.role !== 'player')
-          ? ' <span class="lv-role">(' + escHtml(state.role) + ')</span>'
-          : '';
-        byId('currentUserInfo').innerHTML =
-          '<span class="lv-username" onclick="openPlayerModal(' + state.userId + ')">' +
-          escHtml(name) + '</span>' + roleSuffix;
+        const userInfo = byId('currentUserInfo');
+        userInfo.innerHTML = '';
+        const nameSpan = mk('span', 'lv-username', name);
+        nameSpan.addEventListener('click', function() { openPlayerModal(state.userId); });
+        userInfo.appendChild(nameSpan);
+        if (state.role && state.role !== 'player') {
+          userInfo.appendChild(document.createTextNode(' '));
+          userInfo.appendChild(mk('span', 'lv-role', '(' + state.role + ')'));
+        }
       }
     }
 
@@ -1742,7 +1751,8 @@
 
       const info = document.createElement('div');
       info.className = 'seat-info';
-      info.innerHTML = `<span class="seat-num">${seat}</span><span class="team-tag ${teamClass}">${teamLabel}</span>`;
+      info.appendChild(mk('span', 'seat-num', String(seat)));
+      info.appendChild(mk('span', 'team-tag ' + teamClass, teamLabel));
 
       const btns = document.createElement('div');
       btns.className = 'seat-type-btns';
@@ -1765,7 +1775,7 @@
         if (s.userId) {
           const sel = document.createElement('div');
           sel.className = 'invite-selected';
-          sel.innerHTML = `<span class="invite-selected-name">${escHtml(s.displayName || 'User #' + s.userId)}</span>`;
+          sel.appendChild(mk('span', 'invite-selected-name', s.displayName || 'User #' + s.userId));
           const clr = document.createElement('button');
           clr.className = 'invite-clear';
           clr.textContent = '×';
@@ -1815,7 +1825,7 @@
       dropdown.innerHTML = '';
 
       if (filtered.length === 0) {
-        dropdown.innerHTML = '<div class="invite-empty">No players found</div>';
+        dropdown.appendChild(mk('div', 'invite-empty', 'No players found'));
         return;
       }
 
@@ -1832,7 +1842,8 @@
       [...recent, ...others].slice(0, 12).forEach(u => {
         const item = document.createElement('div');
         item.className = 'invite-item' + (Number(u.recently_played) ? ' recent' : '');
-        item.innerHTML = `<strong>${escHtml(u.display_name)}</strong><span class="invite-email">${escHtml(u.username || '')}</span>`;
+        item.appendChild(mk('strong', null, u.display_name));
+        item.appendChild(mk('span', 'invite-email', u.username || ''));
         item.onmousedown = () => {
           seatState.seats[seat] = { type: 'invite', userId: Number(u.id), displayName: u.display_name };
           rerenderSeatRow(seat);
@@ -2152,16 +2163,25 @@
       const body = byId('allGamesBody');
       body.innerHTML = '';
       if (!games || games.length === 0) {
-        body.innerHTML = '<tr><td colspan="5" class="status">No games.</td></tr>';
+        const emptyTr = document.createElement('tr');
+        const emptyTd = document.createElement('td');
+        emptyTd.colSpan = 5;
+        emptyTd.className = 'status';
+        emptyTd.textContent = 'No games.';
+        emptyTr.appendChild(emptyTd);
+        body.appendChild(emptyTr);
         return;
       }
       games.forEach(g => {
         const tr = document.createElement('tr');
-        tr.innerHTML =
-          '<td class="mono" style="font-size:11px">#' + g.id + '</td>' +
-          '<td>' + (STATUS_LABELS[g.status] || g.status) + '</td>' +
-          '<td>' + (PHASE_LABELS[g.current_phase] || g.current_phase || '—') + '</td>' +
-          '<td class="mono" style="font-size:10px">' + (g.created_at || '').substring(0, 16).replace('T', ' ') + '</td>';
+        const td1 = mk('td', 'mono', '#' + g.id);
+        td1.style.fontSize = '11px';
+        tr.appendChild(td1);
+        tr.appendChild(mk('td', null, STATUS_LABELS[g.status] || g.status));
+        tr.appendChild(mk('td', null, PHASE_LABELS[g.current_phase] || g.current_phase || '—'));
+        const td4 = mk('td', 'mono', (g.created_at || '').substring(0, 16).replace('T', ' '));
+        td4.style.fontSize = '10px';
+        tr.appendChild(td4);
         const td = document.createElement('td');
         const btn = document.createElement('button');
         btn.textContent = 'Archive';
