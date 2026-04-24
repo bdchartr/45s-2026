@@ -1609,22 +1609,27 @@
         card.appendChild(btns);
         overlay.appendChild(card);
 
-      } else if (phase === 'discard_phase' && seated && !viewerHasDiscarded()) {
+      } else if (phase === 'discard_phase' && seated) {
         show = true;
-        const nSel = app.selectedDiscards.length;
-        const hintText = nSel === 0
-          ? 'Select cards in your hand to discard, then confirm'
-          : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — or confirm to keep all';
         const card = mk('div', 'boa-card');
-        card.appendChild(mk('div', 'boa-title', 'Discard'));
-        const hintEl = mk('div', 'boa-hint', hintText);
-        hintEl.id = 'discardHint';
-        card.appendChild(hintEl);
-        const btns = mk('div', 'boa-btns');
-        const confirmBtn = mk('button', null, 'Confirm Discard');
-        confirmBtn.onclick = discardCards;
-        btns.appendChild(confirmBtn);
-        card.appendChild(btns);
+        if (viewerHasDiscarded()) {
+          card.appendChild(mk('div', 'boa-title', 'Waiting…'));
+          card.appendChild(mk('div', 'boa-hint', 'Waiting for other players to discard…'));
+        } else {
+          const nSel = app.selectedDiscards.length;
+          const hintText = nSel === 0
+            ? 'Select cards in your hand to discard, then confirm'
+            : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — or confirm to keep all';
+          card.appendChild(mk('div', 'boa-title', 'Discard'));
+          const hintEl = mk('div', 'boa-hint', hintText);
+          hintEl.id = 'discardHint';
+          card.appendChild(hintEl);
+          const btns = mk('div', 'boa-btns');
+          const confirmBtn = mk('button', null, 'Confirm Discard');
+          confirmBtn.onclick = discardCards;
+          btns.appendChild(confirmBtn);
+          card.appendChild(btns);
+        }
         overlay.appendChild(card);
       }
 
