@@ -883,9 +883,27 @@
     }
 
     .game-card.active  { border-left-color: var(--accent); }
+    .game-card.your-turn { border-left-color: var(--maple); }
     .game-card.open    { border-left-color: var(--maple); }
     .game-card.invited { border-left-color: var(--felt); background: #edf0e6; border-color: rgba(47,78,53,0.35); }
     .game-card.past    { border-left-color: var(--line2); background: var(--paper2); opacity: 0.9; }
+
+    .your-turn-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-radius: 2px;
+      padding: 2px 6px;
+      background: var(--maple);
+      color: var(--cream);
+      animation: pulse-badge 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.55; }
+    }
 
     .game-card-body { flex: 1; min-width: 0; }
 
@@ -990,6 +1008,23 @@
       color: var(--muted);
       letter-spacing: 0.5px;
     }
+
+    .btn-copy-link {
+      background: none;
+      border: 1px solid var(--line2);
+      color: var(--wood);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      padding: 5px 10px;
+      border-radius: 0;
+      cursor: pointer;
+      width: auto;
+      box-shadow: none;
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .btn-copy-link:hover { border-color: var(--wood); color: var(--ink); background: none; }
 
     .btn-del {
       background: none;
@@ -1774,7 +1809,7 @@
       const users = state.lobbyUsers || [];
       const q = query.toLowerCase().trim();
       const filtered = q
-        ? users.filter(u => (u.display_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+        ? users.filter(u => (u.display_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q))
         : users;
 
       dropdown.innerHTML = '';
@@ -1797,7 +1832,7 @@
       [...recent, ...others].slice(0, 12).forEach(u => {
         const item = document.createElement('div');
         item.className = 'invite-item' + (Number(u.recently_played) ? ' recent' : '');
-        item.innerHTML = `<strong>${escHtml(u.display_name)}</strong><span class="invite-email">${escHtml(u.email || '')}</span>`;
+        item.innerHTML = `<strong>${escHtml(u.display_name)}</strong><span class="invite-email">${escHtml(u.username || '')}</span>`;
         item.onmousedown = () => {
           seatState.seats[seat] = { type: 'invite', userId: Number(u.id), displayName: u.display_name };
           rerenderSeatRow(seat);
@@ -1974,8 +2009,11 @@
     }
 
     function buildActiveCard(g) {
+      const myPlayer = (g.players || []).find(p => String(p.user_id) === String(state.userId));
+      const isMyTurn = myPlayer != null && Number(g.current_turn_seat) === Number(myPlayer.seat);
+
       const card = document.createElement('div');
-      card.className = 'game-card active';
+      card.className = 'game-card active' + (isMyTurn ? ' your-turn' : '');
 
       const body = document.createElement('div');
       body.className = 'game-card-body';
@@ -1984,7 +2022,15 @@
       matchup.className = 'game-matchup';
       matchup.appendChild(matchupNode(g.players || []));
       body.appendChild(matchup);
-      body.appendChild(metaChips(g));
+
+      const chips = metaChips(g);
+      if (isMyTurn) {
+        const badge = document.createElement('span');
+        badge.className = 'your-turn-badge';
+        badge.textContent = 'Your turn';
+        chips.insertBefore(badge, chips.firstChild);
+      }
+      body.appendChild(chips);
       card.appendChild(body);
 
       const actions = document.createElement('div');
@@ -1995,12 +2041,6 @@
       link.href = state.basePath + '/game.html?game_id=' + encodeURIComponent(g.id);
       link.textContent = 'Open Board';
       actions.appendChild(link);
-
-      const del = document.createElement('button');
-      del.className = 'btn-del';
-      del.textContent = 'Archive';
-      del.onclick = () => archiveGame(Number(g.id));
-      actions.appendChild(del);
 
       card.appendChild(actions);
       return card;
@@ -2037,6 +2077,17 @@
         waiting.className = 'waiting-label';
         waiting.textContent = 'Waiting for players…';
         actions.appendChild(waiting);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy-link';
+        copyBtn.textContent = 'Copy invite link';
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(window.location.href).then(() => {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy invite link'; }, 2000);
+          });
+        };
+        actions.appendChild(copyBtn);
       } else {
         const btn = document.createElement('button');
         btn.className = 'btn-join';

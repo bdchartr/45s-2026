@@ -68,6 +68,29 @@ final class Routes
             return null;
         };
 
+        // Verify the authenticated session user actually occupies $seat in $gameId.
+        // Reject on mismatch so clients with stale state see an error instead of
+        // silently acting as the wrong player.
+        $requireSeatOwnership = static function (
+            ResponseInterface $response,
+            int $gameId,
+            int $seat
+        ) use ($requireAuthenticated, $json): array {
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn;
+            }
+
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
+            $sessionSeat = $repo->findSeatForUser($gameId, (int) $authn['user_id']);
+            if ($sessionSeat === null || $sessionSeat !== $seat) {
+                return ['error_response' => $json($response, ['ok' => false, 'error' => 'seat_ownership_required'], 403)];
+            }
+
+            return $authn;
+        };
+
         $buildShuffledDeck = static function (int $seed): array {
             $ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
             $suits = ['C', 'D', 'H', 'S'];
@@ -192,7 +215,8 @@ final class Routes
                     null
                 );
             } catch (\Throwable $ex) {
-                return $json($response, ['ok' => false, 'error' => 'register_failed', 'detail' => $ex->getMessage()], 409);
+                error_log('[/api/auth/register] ' . $ex);
+                return $json($response, ['ok' => false, 'error' => 'register_failed'], 409);
             }
 
             $auth = new SessionAuth();
@@ -216,6 +240,13 @@ final class Routes
 
             $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? 'unknown');
             $limiter = RateLimiter::default();
+            // Global per-IP cap — blunts credential stuffing that rotates usernames
+            // to stay under the per-username bucket.
+            $ipKey = 'auth_login_ip:' . $ip;
+            if (!$limiter->allow($ipKey, 30, 900)) {
+                $retry = $limiter->retryAfterSeconds($ipKey, 900);
+                return $json($response, ['ok' => false, 'error' => 'rate_limited', 'retry_after' => $retry], 429);
+            }
             $key = 'auth_login:' . strtolower($username) . ':' . $ip;
             if (!$limiter->allow($key, 8, 900)) {
                 $retry = $limiter->retryAfterSeconds($key, 900);
@@ -282,10 +313,8 @@ final class Routes
             $user = $repo->findUserByProviderSub('google', $googleSub);
             if ($user === null) {
                 $candidate = $usernameBase;
-                $suffix = 1;
                 while ($repo->findUserByUsername($candidate) !== null) {
-                    $suffix++;
-                    $candidate = $usernameBase . '_' . $suffix;
+                    $candidate = $usernameBase . '_' . bin2hex(random_bytes(3));
                 }
 
                 $userId = $repo->createSocialUser($candidate, $email, 'google', $googleSub, $nickname, 'player');
@@ -354,10 +383,8 @@ final class Routes
             $user = $repo->findUserByProviderSub('facebook', $fbSub);
             if ($user === null) {
                 $candidate = $usernameBase;
-                $suffix = 1;
                 while ($repo->findUserByUsername($candidate) !== null) {
-                    $suffix++;
-                    $candidate = $usernameBase . '_' . $suffix;
+                    $candidate = $usernameBase . '_' . bin2hex(random_bytes(3));
                 }
 
                 $userId = $repo->createSocialUser($candidate, $email, 'facebook', $fbSub, $fullName, 'player');
@@ -422,10 +449,8 @@ final class Routes
             $user = $repo->findUserByProviderSub('apple', $appleSub);
             if ($user === null) {
                 $candidate = $usernameBase;
-                $suffix = 1;
                 while ($repo->findUserByUsername($candidate) !== null) {
-                    $suffix++;
-                    $candidate = $usernameBase . '_' . $suffix;
+                    $candidate = $usernameBase . '_' . bin2hex(random_bytes(3));
                 }
 
                 $userId = $repo->createSocialUser($candidate, $email, 'apple', $appleSub, $nickname, 'player');
@@ -582,7 +607,8 @@ final class Routes
             try {
                 $newUserId = $repo->createUser($username, $email, $passwordHash, $role, $authProvider, $externalSub);
             } catch (\Throwable $ex) {
-                return $json($response, ['ok' => false, 'error' => 'failed_to_create_user', 'detail' => $ex->getMessage()], 409);
+                error_log('[/api/admin/users/create] ' . $ex);
+                return $json($response, ['ok' => false, 'error' => 'failed_to_create_user'], 409);
             }
 
             return $json($response, [
@@ -685,10 +711,15 @@ final class Routes
             return $json($response, ['ok' => true, 'archived_game_id' => $gameId]);
         });
 
-        $app->post('/api/lobby/create_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/lobby/create_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireAuthenticated): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
             }
 
             $body = (array) ($request->getParsedBody() ?? []);
@@ -703,7 +734,13 @@ final class Routes
             }
 
             $ruleset = (string) ($body['ruleset'] ?? 'chartrand');
-            $userId = isset($body['user_id']) ? (int) $body['user_id'] : null;
+            // Always use the authenticated session user as the creator. If the client
+            // sent user_id, require it to match (reject rather than silently substitute).
+            $sessionUserId = (int) $authn['user_id'];
+            if (isset($body['user_id']) && (int) $body['user_id'] !== $sessionUserId) {
+                return $json($response, ['ok' => false, 'error' => 'user_id_session_mismatch'], 403);
+            }
+            $userId = $sessionUserId;
             $aiSeats = (array) ($body['ai_seats'] ?? []);
             $inviteMode = strtolower((string) ($body['invite_mode'] ?? 'open'));
             $invites = (array) ($body['invites'] ?? []);
@@ -764,10 +801,8 @@ final class Routes
                 }
             }
 
-            $repo = new GameRepository(Database::fromConfig());
-            if ($userId !== null && !$repo->userExists($userId)) {
-                return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
-            }
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
 
             foreach (array_keys($inviteUserIds) as $inviteUserId) {
                 if (!$repo->userExists((int) $inviteUserId)) {
@@ -775,7 +810,7 @@ final class Routes
                 }
             }
 
-            if ($userId !== null && isset($inviteUserIds[$userId])) {
+            if (isset($inviteUserIds[$userId])) {
                 return $json($response, ['ok' => false, 'error' => 'creator cannot also be invited'], 400);
             }
 
@@ -817,31 +852,40 @@ final class Routes
                     return $gameId;
                 });
             } catch (\Throwable $ex) {
-                return $json($response, ['ok' => false, 'error' => 'create_game_failed', 'detail' => $ex->getMessage()], 500);
+                error_log('[/api/lobby/create_game] ' . $ex);
+                return $json($response, ['ok' => false, 'error' => 'create_game_failed'], 500);
             }
 
             return $json($response, ['ok' => true, 'game_id' => $gameId], 201);
         });
 
-        $app->post('/api/lobby/join_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/lobby/join_game', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireAuthenticated): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
             }
 
-            $body = (array) ($request->getParsedBody() ?? []);
-            $gameId = (int) ($body['game_id'] ?? 0);
-            $userId = (int) ($body['user_id'] ?? 0);
-            if ($gameId <= 0 || $userId <= 0) {
-                return $json($response, ['ok' => false, 'error' => 'game_id and user_id are required'], 400);
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
             }
 
-            $repo = new GameRepository(Database::fromConfig());
+            $body = (array) ($request->getParsedBody() ?? []);
+            $gameId = (int) ($body['game_id'] ?? 0);
+            $sessionUserId = (int) $authn['user_id'];
+            if ($gameId <= 0) {
+                return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
+            }
+            // Always join as the authenticated user; reject on mismatch.
+            if (isset($body['user_id']) && (int) $body['user_id'] !== $sessionUserId) {
+                return $json($response, ['ok' => false, 'error' => 'user_id_session_mismatch'], 403);
+            }
+            $userId = $sessionUserId;
+
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
             if (!$repo->gameExists($gameId)) {
                 return $json($response, ['ok' => false, 'error' => 'Game not found'], 404);
-            }
-            if (!$repo->userExists($userId)) {
-                return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
             }
 
             $existingSeat = $repo->findSeatForUser($gameId, $userId);
@@ -875,6 +919,13 @@ final class Routes
             $authn = $requireAuthenticated($response);
             if (isset($authn['error_response'])) {
                 return $authn['error_response'];
+            }
+
+            $limiter = RateLimiter::default();
+            $statsKey = 'player_stats:' . (int) $authn['user_id'];
+            if (!$limiter->allow($statsKey, 60, 60)) {
+                $retry = $limiter->retryAfterSeconds($statsKey, 60);
+                return $json($response, ['ok' => false, 'error' => 'rate_limited', 'retry_after' => $retry], 429);
             }
 
             /** @var GameRepository $repo */
@@ -989,17 +1040,21 @@ final class Routes
 
         // ── Lobby ────────────────────────────────────────────────────────────────
 
-        $app->get('/api/lobby/my_games', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
-            $params = $request->getQueryParams();
-            $userId = (int) ($params['user_id'] ?? 0);
-            if ($userId <= 0) {
-                return $json($response, ['ok' => false, 'error' => 'user_id is required'], 400);
+        $app->get('/api/lobby/my_games', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated): ResponseInterface {
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
             }
 
-            $repo = new GameRepository(Database::fromConfig());
-            if (!$repo->userExists($userId)) {
-                return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
+            $params = $request->getQueryParams();
+            $sessionUserId = (int) $authn['user_id'];
+            if (isset($params['user_id']) && (int) $params['user_id'] !== $sessionUserId) {
+                return $json($response, ['ok' => false, 'error' => 'user_id_session_mismatch'], 403);
             }
+            $userId = $sessionUserId;
+
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
 
             $games   = $repo->listGamesForUser($userId, 200);
             $gameIds = array_column($games, 'id');
@@ -1016,17 +1071,21 @@ final class Routes
             return $json($response, ['ok' => true, 'games' => $games]);
         });
 
-        $app->get('/api/lobby/list_joinable', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
-            $params = $request->getQueryParams();
-            $userId = (int) ($params['user_id'] ?? 0);
-            if ($userId <= 0) {
-                return $json($response, ['ok' => false, 'error' => 'user_id is required'], 400);
+        $app->get('/api/lobby/list_joinable', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated): ResponseInterface {
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
             }
 
-            $repo = new GameRepository(Database::fromConfig());
-            if (!$repo->userExists($userId)) {
-                return $json($response, ['ok' => false, 'error' => 'user_id does not exist'], 400);
+            $params = $request->getQueryParams();
+            $sessionUserId = (int) $authn['user_id'];
+            if (isset($params['user_id']) && (int) $params['user_id'] !== $sessionUserId) {
+                return $json($response, ['ok' => false, 'error' => 'user_id_session_mismatch'], 403);
             }
+            $userId = $sessionUserId;
+
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
 
             $games   = $repo->listJoinableGamesForUser($userId, 200);
             $gameIds = array_column($games, 'id');
@@ -1125,11 +1184,17 @@ final class Routes
                     'scores'      => $scores,
                 ]);
             } catch (\Throwable $ex) {
-                return $json($response, ['ok' => false, 'error' => 'get_state_failed', 'detail' => $ex->getMessage()], 500);
+                error_log('[/api/game/get_state] ' . $ex);
+                return $json($response, ['ok' => false, 'error' => 'get_state_failed'], 500);
             }
         });
 
-        $app->get('/api/game/poll_events', function (ServerRequestInterface $request, ResponseInterface $response) use ($json): ResponseInterface {
+        $app->get('/api/game/poll_events', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated): ResponseInterface {
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
             $params = $request->getQueryParams();
             $gameId = (int) ($params['game_id'] ?? 0);
             $afterSeq = (int) ($params['after_seq'] ?? 0);
@@ -1137,7 +1202,14 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'game_id is required'], 400);
             }
 
-            $repo = new GameRepository(Database::fromConfig());
+            /** @var GameRepository $repo */
+            $repo = $authn['repo'];
+            $viewerUserId = (int) $authn['user_id'];
+            $isPrivileged = $repo->userIsOwnerOrAdmin($viewerUserId);
+            if (!$isPrivileged && !$repo->userInGame($viewerUserId, $gameId)) {
+                return $json($response, ['ok' => false, 'error' => 'forbidden_for_viewer'], 403);
+            }
+
             $events = $repo->listEventsAfter($gameId, $afterSeq, 100);
 
             return $json($response, [
@@ -1147,7 +1219,7 @@ final class Routes
             ]);
         });
 
-        $app->post('/api/game/submit_bid', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/game/submit_bid', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireSeatOwnership): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
@@ -1160,7 +1232,13 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'game_id and seat are required'], 400);
             }
 
-            $repo = new GameRepository(Database::fromConfig());
+            $authz = $requireSeatOwnership($response, $gameId, $seat);
+            if (isset($authz['error_response'])) {
+                return $authz['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo = $authz['repo'];
             $runtime = new GameRuntimeService($repo);
             $result = $runtime->handle(new ActionCommand($gameId, $seat, 'submit_bid', [
                 'bid' => $body['bid'] ?? 'pass',
@@ -1175,7 +1253,7 @@ final class Routes
             ], $status);
         });
 
-        $app->post('/api/game/play_card', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/game/play_card', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireSeatOwnership): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
@@ -1189,7 +1267,13 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and card are required'], 400);
             }
 
-            $repo = new GameRepository(Database::fromConfig());
+            $authz = $requireSeatOwnership($response, $gameId, $seat);
+            if (isset($authz['error_response'])) {
+                return $authz['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo = $authz['repo'];
             $runtime = new GameRuntimeService($repo);
             $result = $runtime->handle(new ActionCommand($gameId, $seat, 'play_card', [
                 'card' => $card,
@@ -1204,7 +1288,7 @@ final class Routes
             ], $status);
         });
 
-        $app->post('/api/game/declare_trump', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/game/declare_trump', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireSeatOwnership): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
@@ -1218,7 +1302,13 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and trump are required'], 400);
             }
 
-            $repo    = new GameRepository(Database::fromConfig());
+            $authz = $requireSeatOwnership($response, $gameId, $seat);
+            if (isset($authz['error_response'])) {
+                return $authz['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo    = $authz['repo'];
             $runtime = new GameRuntimeService($repo);
             $result  = $runtime->handle(new ActionCommand($gameId, $seat, 'declare_trump', [
                 'trump' => $trump,
@@ -1233,7 +1323,7 @@ final class Routes
             ], $status);
         });
 
-        $app->post('/api/game/discard_cards', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf): ResponseInterface {
+        $app->post('/api/game/discard_cards', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireCsrf, $requireSeatOwnership): ResponseInterface {
             $csrfError = $requireCsrf($request, $response);
             if ($csrfError !== null) {
                 return $csrfError;
@@ -1247,7 +1337,13 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'game_id, seat, and cards[] are required'], 400);
             }
 
-            $repo    = new GameRepository(Database::fromConfig());
+            $authz = $requireSeatOwnership($response, $gameId, $seat);
+            if (isset($authz['error_response'])) {
+                return $authz['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo    = $authz['repo'];
             $runtime = new GameRuntimeService($repo);
             $result  = $runtime->handle(new ActionCommand($gameId, $seat, 'discard_cards', [
                 'cards' => $cards,

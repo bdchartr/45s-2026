@@ -424,6 +424,25 @@ final class RoutesIntegrationTest extends TestCase
         $this->assertTrue(password_verify('validnewpass', (string) $row['password_hash']));
     }
 
+    public function testSubmitBidRejectsSeatNotOwnedBySessionUser(): void
+    {
+        [$pdo, $gameId] = $this->bootstrapWithGames();
+        $pdo->exec("INSERT INTO game_players (game_id, seat, user_id, is_ai, team, connected) VALUES ($gameId, 1, 2, 0, 1, 1)");
+
+        $app  = $this->buildApp();
+        $csrf = $this->seedCsrfToken(userId: 1);
+
+        $response = $app->handle($this->csrfRequest('POST', '/api/game/submit_bid', [
+            'game_id' => $gameId,
+            'seat'    => 1,
+            'bid'     => 'pass',
+        ], $csrf));
+        $payload = json_decode((string) $response->getBody(), true);
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('seat_ownership_required', $payload['error'] ?? null);
+    }
+
     private function seedCsrfToken(int $userId = 0): string
     {
         $token = bin2hex(random_bytes(16));

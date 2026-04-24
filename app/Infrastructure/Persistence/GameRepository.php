@@ -532,7 +532,6 @@ class GameRepository
         $sql = "SELECT u.id,
                        u.username,
                        COALESCE(u.nickname, u.username) AS display_name,
-                       u.email,
                        CASE WHEN co.user_id IS NOT NULL THEN 1 ELSE 0 END AS recently_played
                 FROM users u
                 LEFT JOIN (

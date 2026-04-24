@@ -273,29 +273,34 @@
     /* ── Board Action Overlay ── */
     .boa {
       position: absolute;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
+      inset: 0;
       z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 6, 2, 0.22);
+      pointer-events: none;
+    }
+    .boa-card {
       background: var(--cream);
       border: 1px solid var(--line);
-      border-radius: 0;
       padding: 22px 28px;
       text-align: center;
       box-shadow: 0 20px 60px rgba(50,30,0,0.5), 0 2px 0 rgba(0,0,0,.04);
       min-width: 250px;
       max-width: min(90vw, 380px);
+      position: relative;
       pointer-events: auto;
     }
     /* letterpress double-rule */
-    .boa::before {
+    .boa-card::before {
       content: '';
       position: absolute;
       top: 4px; left: 4px; right: 4px; bottom: 4px;
       border: 1px solid var(--birch);
       pointer-events: none;
     }
-    .boa > * { position: relative; }
+    .boa-card > * { position: relative; }
     .boa-title {
       font-family: 'DM Serif Display', Georgia, serif;
       font-size: 20px;
@@ -325,6 +330,61 @@
     }
     .boa-btns .pass-btn { background: var(--wood); box-shadow: 0 3px 0 var(--wood2); }
     .boa-btns .pass-btn:hover:not(:disabled) { background: var(--wood2); }
+
+    /* ── Hand result overlay (same layout as .boa) ── */
+    .hand-result {
+      position: absolute;
+      inset: 0;
+      z-index: 21;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 6, 2, 0.22);
+      pointer-events: none;
+    }
+    .hand-result-inner {
+      background: var(--cream);
+      border: 1px solid var(--line);
+      padding: 28px 36px;
+      text-align: center;
+      box-shadow: 0 24px 64px rgba(50,30,0,0.55);
+      min-width: 260px;
+      max-width: min(90vw, 400px);
+      position: relative;
+      pointer-events: auto;
+      animation: hr-appear 0.3s ease-out;
+    }
+    .hand-result-inner::before {
+      content: '';
+      position: absolute;
+      top: 4px; left: 4px; right: 4px; bottom: 4px;
+      border: 1px solid var(--birch);
+      pointer-events: none;
+    }
+    @keyframes hr-appear {
+      from { opacity: 0; transform: scale(0.93); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    .hr-title {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: 22px;
+      font-weight: 400;
+      color: var(--ink);
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .hr-title.made { color: var(--felt); }
+    .hr-title.lost { color: var(--accent); }
+    .hr-scores {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.4px;
+      line-height: 1.8;
+      position: relative;
+    }
+    .hr-scores .delta-pos { color: var(--felt); font-weight: 700; }
+    .hr-scores .delta-neg { color: var(--accent); font-weight: 700; }
 
     /* ── Status panel ── */
     .sp-phase {
@@ -989,19 +1049,24 @@
       <section class="stack stack-east"><div>E</div><div class="stack-count" id="stack-east">0</div></section>
 
       <div class="boa" id="boardActionOverlay" style="display:none"></div>
+      <div id="handResult" class="hand-result" style="display:none">
+        <div class="hand-result-inner">
+          <div class="hr-title" id="hrTitle"></div>
+          <div class="hr-scores" id="hrScores"></div>
+        </div>
+      </div>
     </section>
 
     <article class="player-zone zone-south" id="zone-south"></article>
 
     <section class="controls">
       <article class="panel">
-        <h3>Status</h3>
         <div id="statusPanel"></div>
         <div id="actionStatus" class="status mt-10"></div>
       </article>
 
       <article class="panel">
-        <h3>Recent Events</h3>
+        <h3>Game Log</h3>
         <div class="log" id="eventLog"></div>
       </article>
     </section>
@@ -1329,6 +1394,69 @@
     }
 
     // -------------------------------------------------------------------------
+    // Hand result interstitial
+    // -------------------------------------------------------------------------
+
+    function teamLabel(teamNum) {
+      const members = (app.players || []).filter(function(p) { return Number(p.team) === teamNum; });
+      return members.length > 0
+        ? members.map(function(p) { return displayNameForPlayer(p); }).join(' & ')
+        : 'Team ' + teamNum;
+    }
+
+    let handResultTimer = null;
+
+    function showHandResult(ev) {
+      const p = ev.payload || {};
+      const bidTeam   = Number(p.bid_team ?? -1);
+      const bidValue  = Number(p.bid_value ?? 0);
+      const bidMade   = !!p.bid_made;
+      const is3060    = !!p.is_30_for_60;
+      const d0        = Number(p.team0_delta ?? 0);
+      const d1        = Number(p.team1_delta ?? 0);
+      const t0        = Number(p.team0_total ?? 0);
+      const t1        = Number(p.team1_total ?? 0);
+      const target    = Number((app.state || {}).target_score || 120);
+
+      const bidLabel  = is3060 ? '30-for-60' : String(bidValue);
+      const bidderName = teamLabel(bidTeam);
+
+      const titleEl  = document.getElementById('hrTitle');
+      const scoresEl = document.getElementById('hrScores');
+      const overlay  = document.getElementById('handResult');
+      if (!titleEl || !scoresEl || !overlay) return;
+
+      titleEl.className = 'hr-title ' + (bidMade ? 'made' : 'lost');
+      titleEl.textContent = bidMade
+        ? bidderName + ' made ' + bidLabel
+        : bidderName + ' lost the ' + bidLabel + ' bid';
+
+      const fmtDelta = (d) => d >= 0 ? '<span class="delta-pos">+' + d + '</span>' : '<span class="delta-neg">' + d + '</span>';
+      const team0Line = teamLabel(0) + ': ' + fmtDelta(d0) + ' → ' + t0 + '/' + target;
+      const team1Line = teamLabel(1) + ': ' + fmtDelta(d1) + ' → ' + t1 + '/' + target;
+      scoresEl.innerHTML = team0Line + '<br>' + team1Line;
+
+      overlay.style.display = '';
+      if (handResultTimer) clearTimeout(handResultTimer);
+      handResultTimer = setTimeout(function() {
+        overlay.style.display = 'none';
+        handResultTimer = null;
+      }, 3500);
+    }
+
+    function syncHandResult(previousMaxSeq) {
+      if (previousMaxSeq === 0) return;
+      const animDelay = TRICK_CARD_SETTLE_MS + TRICK_WINNER_GLOW_MS + (4 * TRICK_STAGGER_MS) + TRICK_COLLECTION_MS + 400;
+      for (let i = app.events.length - 1; i >= 0; i--) {
+        const ev = app.events[i];
+        if (ev.event_type === 'hand_scored' && Number(ev.seq_no) > previousMaxSeq) {
+          setTimeout(function() { showHandResult(ev); }, animDelay);
+          break;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
     // Player name helpers
     // -------------------------------------------------------------------------
 
@@ -1460,7 +1588,7 @@
       }
 
       overlay.style.display = show ? '' : 'none';
-      if (show) overlay.innerHTML = html;
+      if (show) overlay.innerHTML = '<div class="boa-card">' + html + '</div>';
     }
 
     // -------------------------------------------------------------------------
@@ -1535,13 +1663,6 @@
       const s0 = Number(sc.team0_sets  ?? 0);
       const s1 = Number(sc.team1_sets  ?? 0);
       const target = Number(g.target_score || 120);
-
-      function teamLabel(teamNum) {
-        const members = (app.players || []).filter(function(p) { return Number(p.team) === teamNum; });
-        return members.length > 0
-          ? members.map(function(p) { return displayNameForPlayer(p); }).join(' & ')
-          : 'Team ' + teamNum;
-      }
 
       const t0cls = s0 >= 2 ? ' set-warn' : '';
       const t1cls = s1 >= 2 ? ' set-warn' : '';
@@ -1721,10 +1842,11 @@
         turnHtml = '<div class="turn-indicator">' + arrowIn + ' ' + phaseLabel + ' ' + arrowIn + '</div>';
       }
 
+      const dealMasked = app.dealMaskedSides && app.dealMaskedSides.has(side);
       zone.innerHTML =
         '<div class="player-name">' + playerNameHtml(p) + ' <span style="font-weight:400;color:var(--muted);font-size:12px">Seat ' + seat + '</span></div>' +
         '<div class="player-meta">' + (statusBits.length ? statusBits.join(' · ') : '&nbsp;') + '</div>' +
-        '<div class="hand" id="hand-' + side + '">' + handHtml + '</div>' +
+        '<div class="hand" id="hand-' + side + '"' + (dealMasked ? ' style="opacity:0"' : '') + '>' + handHtml + '</div>' +
         bidBadgeHtml +
         turnHtml;
 
@@ -2185,6 +2307,8 @@
         app.viewerSeat = findViewerSeat();
         syncTrickAnimation(previousMaxSeq);
         syncDealAnimation(previousMaxSeq);
+        syncKittyAnimation(previousMaxSeq);
+        syncHandResult(previousMaxSeq);
         // Clear discard selection if phase changed away from discard_phase
         if (String(app.state.current_phase) !== 'discard_phase') {
           app.selectedDiscards = [];
@@ -2194,7 +2318,7 @@
         if (app.viewerSeat === null) {
           status('You are signed in but not seated in this game.', 'error');
         } else {
-          status('Board updated.', 'success');
+          status('');
         }
       } catch (err) {
         status('Refresh failed: ' + err.message, 'error');
@@ -2253,6 +2377,15 @@
         sequence.push({ dest: 'kitty' });
       }
 
+      // Mask all player hands NOW (synchronously) so renderBoard() hides them
+      app.dealMaskedSides = new Set(orderedSides);
+
+      // Find the last delivery step index for each player side
+      const lastStepBySide = {};
+      sequence.forEach(function(step, i) {
+        if (step.dest !== 'kitty') lastStepBySide[step.dest] = i;
+      });
+
       const DEAL_STEP_MS = 333;
 
       sequence.forEach(function (step, i) {
@@ -2296,6 +2429,23 @@
           }, 260);
         }, i * DEAL_STEP_MS);
       });
+
+      // Reveal each player's hand after their last card lands
+      Object.keys(lastStepBySide).forEach(function(side) {
+        const revealAt = lastStepBySide[side] * DEAL_STEP_MS + 500;
+        setTimeout(function() {
+          if (app.dealMaskedSides) app.dealMaskedSides.delete(side);
+          const handEl = document.getElementById('hand-' + side);
+          if (handEl) {
+            handEl.style.transition = 'opacity 0.38s ease';
+            handEl.style.opacity = '1';
+          }
+        }, revealAt);
+      });
+
+      // Safety: clear mask after full animation + buffer
+      const totalMs = (sequence.length - 1) * DEAL_STEP_MS + 1200;
+      setTimeout(function() { app.dealMaskedSides = null; }, totalMs);
     }
 
     function syncDealAnimation(previousMaxSeq) {
@@ -2315,6 +2465,70 @@
         const dealerSeat = Number(p.dealer_seat ?? app.state.dealer_seat ?? 0);
         const playerCount = Number(p.player_count || 4);
         runDealAnimation(dealerSeat, playerCount);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Kitty pick-up animation
+    // -------------------------------------------------------------------------
+
+    function runKittyAnimation(winnerSeat) {
+      const winnerSide = sideForSeat(winnerSeat);
+      if (!winnerSide) return;
+      const center = document.getElementById('center');
+      const targetZone = document.getElementById('zone-' + winnerSide);
+      if (!center || !targetZone) return;
+
+      // Read rects synchronously before renderBoard removes the kitty-display
+      const centerRect  = center.getBoundingClientRect();
+      const targetRect  = targetZone.getBoundingClientRect();
+
+      const STAGGER_MS = 160;
+      const fw = 42, fh = 60;
+
+      for (let k = 0; k < 3; k++) {
+        setTimeout(function () {
+          // Spread start positions slightly around center
+          const startX = centerRect.left + centerRect.width  / 2 - fw / 2 + (k - 1) * 16;
+          const startY = centerRect.top  + centerRect.height / 2 - fh / 2 + (k - 1) *  8;
+          const endX   = targetRect.left + targetRect.width  / 2 - fw / 2 + (Math.random() * 20 - 10);
+          const endY   = targetRect.top  + targetRect.height / 2 - fh / 2 + (Math.random() * 12 -  6);
+          const dx = endX - startX;
+          const dy = endY - startY;
+          const rotStart = ((k - 1) * 10).toFixed(1);
+          const rotEnd   = (Math.random() * 12 - 6).toFixed(1);
+
+          const fly = document.createElement('div');
+          fly.className = 'fly-deal-card';
+          fly.style.left      = startX + 'px';
+          fly.style.top       = startY + 'px';
+          fly.style.transform = 'rotate(' + rotStart + 'deg) scale(0.88)';
+          fly.style.opacity   = '0';
+          document.body.appendChild(fly);
+
+          void fly.offsetWidth;
+          fly.style.transition = 'transform 0.38s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.16s ease';
+          fly.style.transform  = 'translate(' + dx + 'px,' + dy + 'px) rotate(' + rotEnd + 'deg) scale(1)';
+          fly.style.opacity    = '1';
+
+          setTimeout(function () {
+            fly.style.opacity = '0';
+            setTimeout(function () { if (fly.parentNode) fly.parentNode.removeChild(fly); }, 180);
+          }, 310);
+        }, k * STAGGER_MS);
+      }
+    }
+
+    function syncKittyAnimation(previousMaxSeq) {
+      if (previousMaxSeq === 0) return;
+      for (let i = app.events.length - 1; i >= 0; i--) {
+        const ev = app.events[i];
+        if (ev.event_type === 'kitty_picked_up' && Number(ev.seq_no) > previousMaxSeq) {
+          const p = ev.payload || {};
+          const winnerSeat = Number(p.winner_seat ?? -1);
+          if (winnerSeat >= 0) runKittyAnimation(winnerSeat);
+          break;
+        }
       }
     }
 
@@ -2378,11 +2592,9 @@
         setTimeout(function() { fly.style.boxShadow = ''; }, 200);
       }
 
+      // Resolve with the fly element; caller removes it after renderBoard runs
       return new Promise(function (resolve) {
-        setTimeout(function () {
-          if (fly.parentNode) fly.parentNode.removeChild(fly);
-          resolve();
-        }, 500);
+        setTimeout(function () { resolve(fly); }, 450);
       });
     }
 
@@ -2392,6 +2604,7 @@
         return;
       }
       if (!code) return;
+      let flyEl = null;
       try {
         // Capture hand chip position before removing it
         const chipEl = document.querySelector('[data-card="' + code + '"]');
@@ -2404,8 +2617,8 @@
 
         status('Playing ' + cardLabel(code) + '…', '');
 
-        // Fly animation + API call run in parallel
-        await Promise.all([
+        // Fly animation + API call run in parallel; flyEl stays in DOM after landing
+        const results = await Promise.all([
           flyCardToCenter(code, trump, fromRect, 'south'),
           api('/api/game/play_card', 'POST', {
             game_id: app.gameId,
@@ -2413,10 +2626,22 @@
             card: code,
           }, true),
         ]);
+        flyEl = results[0];
+
+        // Refresh renders the real table card underneath the still-visible fly card
+        await refreshAll();
+
+        // Fade out fly card now that the real card is in the DOM
+        if (flyEl && flyEl.parentNode) {
+          flyEl.style.transition = 'opacity 0.12s ease';
+          flyEl.style.opacity = '0';
+          setTimeout(function () { if (flyEl && flyEl.parentNode) flyEl.parentNode.removeChild(flyEl); }, 130);
+        }
 
         status('Played ' + cardLabel(code), 'success');
-        await refreshAll();
       } catch (err) {
+        // Remove fly card immediately on failure
+        if (flyEl && flyEl.parentNode) flyEl.parentNode.removeChild(flyEl);
         // Restore card on failure
         if (!app.viewerHand.includes(code)) {
           app.viewerHand.push(code);
