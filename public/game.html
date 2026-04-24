@@ -1942,12 +1942,16 @@
             if (isSelected) extra.push('selected');
             handDiv.appendChild(cardChipEl(code, trump, extra));
           }
-        } else {
-          handDiv.appendChild(mk('div', 'card-chip back'));
         }
+        // Empty viewerHand = all cards played; render nothing (no stray placeholder)
       } else {
         const handCounts = deriveHandCounts();
-        const cardCount = seat !== null && handCounts[seat] !== undefined ? handCounts[seat] : 5;
+        // Use 0 for empty/open seats; 5 as fallback only when a player is present
+        // but their count isn't tracked yet (e.g. very first render before events load).
+        const occupant = seat !== null ? playerBySeat(seat) : null;
+        const cardCount = occupant !== null
+          ? Math.max(0, handCounts[seat] !== undefined ? handCounts[seat] : 5)
+          : 0;
         for (let i = 0; i < cardCount; i++) {
           handDiv.appendChild(mk('div', 'card-chip back'));
         }
@@ -2032,19 +2036,25 @@
           break;
         }
       }
-      var played = {};
+      // Count cards removed from each seat's hand since the deal.
+      var removed = {};
       for (var i = 0; i < app.events.length; i++) {
         var e = app.events[i];
         if (e.seq_no <= handDealtSeq) continue;
-        if (e.event_type !== 'card_played') continue;
         var s = Number(e.actor_seat);
-        played[s] = (played[s] || 0) + 1;
+        if (e.event_type === 'card_played') {
+          removed[s] = (removed[s] || 0) + 1;
+        } else if (e.event_type === 'discard_action' || e.event_type === 'dealer_draw_discard') {
+          var p = e.payload || {};
+          var n = Array.isArray(p.discarded) ? p.discarded.length : 0;
+          removed[s] = (removed[s] || 0) + n;
+        }
       }
       var counts = {};
       if (Array.isArray(app.players)) {
         app.players.forEach(function(p) {
           var s = Number(p.seat);
-          counts[s] = Math.max(0, 5 - (played[s] || 0));
+          counts[s] = Math.max(0, 5 - (removed[s] || 0));
         });
       }
       return counts;
