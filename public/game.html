@@ -308,6 +308,13 @@
       color: var(--ink);
       margin: 0 0 4px;
     }
+    .boa-trump {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.3px;
+      margin-bottom: 10px;
+    }
     .boa-hint {
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
@@ -1621,6 +1628,16 @@
             ? 'Select cards in your hand to discard, then confirm'
             : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — or confirm to keep all';
           card.appendChild(mk('div', 'boa-title', 'Discard'));
+          const trump = app.hand ? app.hand.trump_suit : null;
+          if (trump) {
+            const trumpEl = mk('div', 'boa-trump');
+            trumpEl.appendChild(document.createTextNode('Trump: '));
+            const sym = mk('span', null, SUIT_SYM[trump] + ' ' + SUIT_NAME[trump]);
+            sym.style.color = isRedSuit(trump) ? '#b91c1c' : '#1a1f25';
+            sym.style.fontWeight = '600';
+            trumpEl.appendChild(sym);
+            card.appendChild(trumpEl);
+          }
           const hintEl = mk('div', 'boa-hint', hintText);
           hintEl.id = 'discardHint';
           card.appendChild(hintEl);
