@@ -2128,8 +2128,16 @@
 
     function viewerHasDiscarded() {
       if (app.viewerSeat === null) return false;
+      // Find the latest hand_dealt seq_no so we only check the current hand.
+      let handDealtSeq = 0;
+      for (let i = 0; i < app.events.length; i++) {
+        if (app.events[i].event_type === 'hand_dealt') {
+          handDealtSeq = app.events[i].seq_no;
+        }
+      }
       for (let i = 0; i < app.events.length; i++) {
         const e = app.events[i];
+        if (Number(e.seq_no) <= handDealtSeq) continue;
         if ((e.event_type === 'discard_action' || e.event_type === 'dealer_draw_discard')
             && Number(e.actor_seat) === Number(app.viewerSeat)) {
           return true;
