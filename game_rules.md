@@ -139,7 +139,16 @@ After trump is declared:
 
 ### 6.1 Leading
 - The player who won the bid leads the first trick.
-- Any card may be led.
+- Trump may not be led until trump has been **broken**. "Breaking trump"
+  means a trump card was played in a non-leading position on a prior
+  trick this hand (e.g. a player out of the led suit chooses to trump
+  in). The Ace of Hearts counts as trump for this rule, since it is
+  always trump.
+- Exception: a player whose hand contains only trump cards may lead
+  trump even if it has not yet been broken — otherwise they would have
+  no legal play. (The all-trump check also treats the Ace of Hearts as
+  trump.)
+- The trump-broken state resets at the start of each hand.
 
 ### 6.2 Following Suit
 - If a non-trump suit is led, players must follow suit **if they can**.

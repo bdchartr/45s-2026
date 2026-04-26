@@ -156,18 +156,53 @@ final class AlgorithmicMoveProviderTest extends TestCase
     // Trick play
     // =========================================================================
 
-    public function testPlaysHighestLegalCardWhenLeading(): void
+    public function testPlaysHighestLegalCardWhenLeadingAfterTrumpBroken(): void
     {
-        // Leading (no lead suit) — should play highest card: 5H is top trump when trump=H
+        // Leading (no lead suit) once trump has been broken — should play
+        // highest card: 5H is top trump when trump=H.
         $resp = $this->ai->choose($this->req('trick_play', [
-            'hand_cards' => ['5H', '2C', '3D'],
-            'trump_suit' => 'H',
-            'lead_suit'  => null,
-            'lead_card'  => null,
+            'hand_cards'   => ['5H', '2C', '3D'],
+            'trump_suit'   => 'H',
+            'lead_suit'    => null,
+            'lead_card'    => null,
+            'trump_broken' => true,
         ]));
 
         $this->assertSame('play_card', $resp->actionType);
         $this->assertSame('5H', $resp->payload['card']);
+    }
+
+    public function testDoesNotLeadTrumpBeforeItIsBroken(): void
+    {
+        // Leading with trump unbroken and a non-trump available — must pick
+        // a non-trump even though the trump (5H) would otherwise be the
+        // strongest card. Highest non-trump in red suits is the AD (aces
+        // rank highest).
+        $resp = $this->ai->choose($this->req('trick_play', [
+            'hand_cards'   => ['5H', '2C', 'AD'],
+            'trump_suit'   => 'H',
+            'lead_suit'    => null,
+            'lead_card'    => null,
+            'trump_broken' => false,
+        ]));
+
+        $this->assertSame('play_card', $resp->actionType);
+        $this->assertNotSame('5H', $resp->payload['card']);
+    }
+
+    public function testLeadsTrumpWhenHandIsAllTrumpEvenIfNotBroken(): void
+    {
+        // Only trump in hand — must be allowed to lead trump.
+        $resp = $this->ai->choose($this->req('trick_play', [
+            'hand_cards'   => ['5H', 'AH', 'JH'],
+            'trump_suit'   => 'H',
+            'lead_suit'    => null,
+            'lead_card'    => null,
+            'trump_broken' => false,
+        ]));
+
+        $this->assertSame('play_card', $resp->actionType);
+        $this->assertContains($resp->payload['card'], ['5H', 'AH', 'JH']);
     }
 
     public function testPlaysHighestLegalCardFollowingSuit(): void

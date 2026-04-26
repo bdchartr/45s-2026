@@ -96,6 +96,7 @@ Last updated: 2026-04-20 (social auth update)
 - Full phase lifecycle: `bidding → declare_trump → discard_phase → trick_play → score_hand → game_over` (loops)
 - Bidding order: left of dealer first, dealer last; dealer may match current high to steal
 - All 45s card ranking, legal move validation, trick resolution (pure domain classes)
+- `LegalMoveValidator::canPlayCard` enforces the "trump must be broken before it can be led" rule. Callers (`GameRuntimeService::handlePlayCard`, `AlgorithmicMoveProvider`) compute the trump-broken state from the current hand's completed tricks and pass it in. The validator's all-trump exception treats the Ace of Hearts as trump.
 - Discard + replacement draw; bid winner gets kitty merged into hand
 - Hand scoring: best-trump bonus (+5), set tracking, bid-out, three-sets loss, game-over
 - Scores persisted per hand in `scores` table

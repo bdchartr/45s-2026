@@ -10,7 +10,10 @@ use FortyFives\Domain\Game\Card;
  * Full 45s legal-move validation per the Chartrand/Newfoundland ruleset.
  *
  * Core rules:
- * 1. If leading (no lead suit yet), any card is legal.
+ * 1. Leading: any card except trump, unless trump has been broken or the
+ *    player's hand is all trump. "Trump broken" = a trump card was played
+ *    in a non-leading position on a prior trick this hand. The Ace of
+ *    Hearts counts as trump for both checks.
  * 2. A player may always play a trump card instead of following the led suit ("reneging" allowed via trump).
  * 3. If trump is led, players must follow trump IF they have trump — EXCEPT the top 3 trumps
  *    (5 of trump, J of trump, A of Hearts) cannot be forced out by a lower trump lead.
@@ -30,17 +33,28 @@ final class LegalMoveValidator
      * @param string|null $leadSuit  Suit of the first card played this trick (null if leading)
      * @param string $trumpSuit  Current trump suit
      * @param string|null $leadCard  Full card code of the lead card (needed for top-trump force-out check)
+     * @param bool $trumpBroken  Has a trump card been played in a non-leading position on a prior trick this hand?
      */
     public function canPlayCard(
         array $hand,
         Card $play,
         ?string $leadSuit,
         string $trumpSuit,
-        ?string $leadCard = null
+        ?string $leadCard = null,
+        bool $trumpBroken = false
     ): bool {
-        // Rule 1: Leading — anything goes
+        // Rule 1: Leading — any non-trump card is legal. Trump cannot be led
+        // until it has been broken, with one exception: a player whose hand
+        // is all trump may lead a trump card (otherwise they'd have nothing
+        // legal to play).
         if ($leadSuit === null) {
-            return true;
+            if (!$this->ranker->isTrump($play, $trumpSuit)) {
+                return true;
+            }
+            if ($trumpBroken) {
+                return true;
+            }
+            return $this->handIsAllTrump($hand, $trumpSuit);
         }
 
         $playIsTrump = $this->ranker->isTrump($play, $trumpSuit);
@@ -130,6 +144,25 @@ final class LegalMoveValidator
         }
 
         return false;
+    }
+
+    /**
+     * Every card in the hand is trump (including the Ace of Hearts, which is
+     * always trump regardless of the declared trump suit). Used by the
+     * leading-trump exception: a player with nothing but trump must be
+     * allowed to lead trump even if it hasn't been broken.
+     */
+    private function handIsAllTrump(array $hand, string $trumpSuit): bool
+    {
+        if (empty($hand)) {
+            return false;
+        }
+        foreach ($hand as $card) {
+            if (!$this->ranker->isTrump($card, $trumpSuit)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

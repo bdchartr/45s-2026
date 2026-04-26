@@ -35,14 +35,63 @@ final class LegalMoveValidatorTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // Leading (no lead suit) — anything is legal
+    // Leading (no lead suit) — non-trump always legal; trump only when broken
+    // or when the hand contains nothing but trump.
     // -------------------------------------------------------------------------
 
-    public function testLeadingAnyCardIsLegal(): void
+    public function testLeadingNonTrumpIsLegal(): void
     {
         $hand = $this->cards('2C', 'KH', '5S', 'AD', '7H');
         $this->assertTrue($this->validator->canPlayCard($hand, $this->card('2C'), null, 'H'));
-        $this->assertTrue($this->validator->canPlayCard($hand, $this->card('KH'), null, 'H'));
+    }
+
+    public function testLeadingTrumpIsIllegalBeforeTrumpIsBroken(): void
+    {
+        $hand = $this->cards('2C', 'KH', '5S', 'AD', '7H'); // mixed, trump = hearts
+        $this->assertFalse(
+            $this->validator->canPlayCard($hand, $this->card('KH'), null, 'H', null, false)
+        );
+    }
+
+    public function testLeadingTrumpIsLegalOnceTrumpIsBroken(): void
+    {
+        $hand = $this->cards('2C', 'KH', '5S', 'AD', '7H');
+        $this->assertTrue(
+            $this->validator->canPlayCard($hand, $this->card('KH'), null, 'H', null, true)
+        );
+    }
+
+    public function testLeadingTrumpIsLegalWhenHandIsAllTrump(): void
+    {
+        // Hand is K, 7 of hearts (both trump) plus AH. All trump.
+        $hand = $this->cards('KH', '7H', 'AH');
+        $this->assertTrue(
+            $this->validator->canPlayCard($hand, $this->card('KH'), null, 'H', null, false)
+        );
+    }
+
+    public function testAceOfHeartsCountsAsTrumpInAllTrumpExceptionWhenSpadesAreTrump(): void
+    {
+        // Spades is trump. Hand is 5S, JS, AH — all trump because A♥ is
+        // always trump. Player must be allowed to lead any of them even
+        // though trump hasn't been broken.
+        $hand = $this->cards('5S', 'JS', 'AH');
+        $this->assertTrue(
+            $this->validator->canPlayCard($hand, $this->card('AH'), null, 'S', null, false)
+        );
+        $this->assertTrue(
+            $this->validator->canPlayCard($hand, $this->card('5S'), null, 'S', null, false)
+        );
+    }
+
+    public function testAceOfHeartsLeadIsIllegalBeforeBrokenWhenOtherSuitsHeld(): void
+    {
+        // Spades is trump. AH is trump (always). Hand also has clubs, so
+        // leading AH is leading trump and must be rejected pre-break.
+        $hand = $this->cards('AH', '2C', '7D');
+        $this->assertFalse(
+            $this->validator->canPlayCard($hand, $this->card('AH'), null, 'S', null, false)
+        );
     }
 
     // -------------------------------------------------------------------------

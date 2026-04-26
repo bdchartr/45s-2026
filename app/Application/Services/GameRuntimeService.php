@@ -433,6 +433,40 @@ final class GameRuntimeService
         return $count;
     }
 
+    /**
+     * Has trump been "broken" on a prior trick of the given hand? Trump is
+     * broken when a player plays a trump card in a non-leading position on a
+     * trick where the lead was not itself trump. The Ace of Hearts counts
+     * as trump regardless of the declared trump suit.
+     *
+     * Only completed tricks are inspected; the in-progress trick is
+     * irrelevant since the rule only governs whether the *next* lead may be
+     * trump.
+     */
+    private function isTrumpBroken(int $handId, string $trumpSuit): bool
+    {
+        foreach ($this->games->listTricks($handId) as $trick) {
+            if ($trick['winner_seat'] === null) {
+                continue; // skip in-progress trick
+            }
+            $cards = $trick['cards'] ?? [];
+            if (count($cards) < 2) {
+                continue;
+            }
+            $leadObj = $this->parseCardCode((string) ($cards[0]['card'] ?? ''));
+            if ($leadObj === null || $this->ranker->isTrump($leadObj, $trumpSuit)) {
+                continue; // trump-led tricks don't break trump (it was already broken or all-trump)
+            }
+            for ($i = 1; $i < count($cards); $i++) {
+                $obj = $this->parseCardCode((string) ($cards[$i]['card'] ?? ''));
+                if ($obj !== null && $this->ranker->isTrump($obj, $trumpSuit)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private function startTrickPlay(int $gameId, array $state, int $handId, int $bidWinnerSeat): ActionResult
     {
         $this->games->setHandPhase($handId, 'trick_play');
@@ -503,7 +537,18 @@ final class GameRuntimeService
             $handCardObjs = array_map(fn(string $c) => $this->parseCardCode($c), $seatCards);
             $handCardObjs = array_values(array_filter($handCardObjs));
 
-            if (!$this->validator->canPlayCard($handCardObjs, $card, $leadSuit, $trump, $leadCard)) {
+            $trumpBroken = $this->isTrumpBroken($handId, $trump);
+
+            if (!$this->validator->canPlayCard($handCardObjs, $card, $leadSuit, $trump, $leadCard, $trumpBroken)) {
+                // Distinguish the trump-not-broken-yet rejection from generic
+                // must-follow-suit so the player knows what just happened.
+                $isLead = $leadSuit === null;
+                if ($isLead && $this->ranker->isTrump($card, $trump)) {
+                    return ActionResult::rejected(
+                        'trump_not_broken',
+                        'You cannot lead trump until trump has been broken (a trump played on a non-trump trick).'
+                    );
+                }
                 return ActionResult::rejected('illegal_move', 'That card cannot be played; must follow suit rules.');
             }
 
@@ -895,6 +940,8 @@ final class GameRuntimeService
                 $ctx['lead_suit'] = $leadSuit;
                 $ctx['lead_card'] = $leadCardCode;
             }
+            // Lets the AI know whether it may legally lead trump.
+            $ctx['trump_broken'] = $trump !== '' && $this->isTrumpBroken((int) $hand['id'], $trump);
         }
 
         return $ctx;

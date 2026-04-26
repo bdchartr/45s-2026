@@ -173,10 +173,11 @@ final class AlgorithmicMoveProvider implements MoveProviderInterface
      */
     private function chooseCard(AIRequest $request): AIResponse
     {
-        $hand     = $request->state['hand_cards'] ?? [];
-        $trump    = (string) ($request->state['trump_suit'] ?? '');
-        $leadSuit = $request->state['lead_suit'] ?? null;
-        $leadCard = $request->state['lead_card'] ?? null;
+        $hand        = $request->state['hand_cards'] ?? [];
+        $trump       = (string) ($request->state['trump_suit'] ?? '');
+        $leadSuit    = $request->state['lead_suit'] ?? null;
+        $leadCard    = $request->state['lead_card'] ?? null;
+        $trumpBroken = (bool) ($request->state['trump_broken'] ?? false);
 
         if (empty($hand)) {
             return new AIResponse('play_card', ['card' => ''], 'No cards in hand');
@@ -198,7 +199,7 @@ final class AlgorithmicMoveProvider implements MoveProviderInterface
             if ($card === null) {
                 continue;
             }
-            if ($this->validator->canPlayCard($handObjs, $card, $leadSuit, $trump, $leadCard)) {
+            if ($this->validator->canPlayCard($handObjs, $card, $leadSuit, $trump, $leadCard, $trumpBroken)) {
                 $legal[] = [
                     'code'     => $code,
                     'strength' => $trump !== '' ? $this->ranker->strength($card, $trump) : 0,
