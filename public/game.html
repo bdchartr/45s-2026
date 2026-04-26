@@ -338,6 +338,25 @@
     .boa-btns .pass-btn { background: var(--wood); box-shadow: 0 3px 0 var(--wood2); }
     .boa-btns .pass-btn:hover:not(:disabled) { background: var(--wood2); }
 
+    /* Compact, read-only preview of viewer hand inside bid/discard overlays
+       so the player doesn't have to scroll to see their cards. */
+    .boa-hand {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .boa-hand .card-chip {
+      width: 44px;
+      height: 60px;
+      padding: 4px;
+      cursor: default;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    }
+    .boa-hand .card-chip .c-rank { font-size: 14px; }
+    .boa-hand .card-chip .c-suit { font-size: 14px; }
+
     /* ── Hand result overlay (same layout as .boa) ── */
     .hand-result {
       position: absolute;
@@ -392,6 +411,68 @@
     }
     .hr-scores .delta-pos { color: var(--felt); font-weight: 700; }
     .hr-scores .delta-neg { color: var(--accent); font-weight: 700; }
+    .hr-tricks {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.4px;
+      margin-top: 14px;
+      margin-bottom: 6px;
+      position: relative;
+    }
+    .hr-actions {
+      margin-top: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+    }
+    .hr-actions button {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: 16px;
+      font-weight: 400;
+      background: var(--ink);
+      color: var(--cream);
+      border: none;
+      padding: 10px 28px;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+    }
+    .hr-actions button:hover { background: #2a1a08; }
+
+    /* Per-player current-hand trick counter pill */
+    .tricks-pill {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-top: 4px;
+      padding: 2px 8px;
+      background: rgba(232, 220, 196, 0.18);
+      border: 1px solid var(--birch);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.6px;
+      color: var(--cream);
+      text-transform: uppercase;
+    }
+    .player-zone.zone-south .tricks-pill {
+      background: rgba(46, 30, 12, 0.06);
+      border-color: var(--birch);
+      color: var(--ink);
+    }
+    .tricks-pill .tn { font-weight: 700; font-size: 12px; letter-spacing: 0.4px; }
+    .hr-auto {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .hr-auto input { cursor: pointer; }
 
     /* ── Status panel ── */
     .sp-phase {
@@ -728,6 +809,9 @@
       visibility: hidden;
     }
 
+    /* Per-direction trick stack indicator. Hidden in favour of the
+       per-player Tricks pill rendered inside each player zone, but kept
+       in the DOM so the trick-sweep animation can target it. */
     .stack {
       position: absolute;
       width: 64px;
@@ -745,6 +829,7 @@
       text-transform: uppercase;
       letter-spacing: 0.08em;
       font-family: 'Work Sans', system-ui, sans-serif;
+      visibility: hidden;
     }
 
     .stack-count {
@@ -1060,6 +1145,14 @@
         <div class="hand-result-inner">
           <div class="hr-title" id="hrTitle"></div>
           <div class="hr-scores" id="hrScores"></div>
+          <div class="hr-tricks" id="hrTricks"></div>
+          <div class="hr-actions">
+            <button type="button" id="hrContinueBtn">Next hand</button>
+            <label class="hr-auto">
+              <input type="checkbox" id="hrAutoAdvance">
+              <span>Auto-advance after 5 seconds</span>
+            </label>
+          </div>
         </div>
       </div>
     </section>
@@ -1114,7 +1207,9 @@
     const SUIT_NAME = { C: 'Clubs', D: 'Diamonds', H: 'Hearts', S: 'Spades' };
     const TRICK_WINNER_EVENT_TYPES = ['trick_won', 'trick_resolved', 'trick_completed'];
     const TRICK_CARD_SETTLE_MS = 600;
-    const TRICK_WINNER_GLOW_MS = 150;
+    // Hold the winning card glow long enough for a person (not just a developer)
+    // to register who took the trick before the cards sweep away.
+    const TRICK_WINNER_GLOW_MS = 1400;
     const TRICK_COLLECTION_MS = 900;
     const TRICK_STAGGER_MS = 40;
     const TRICK_COLLECTION_BUFFER_MS = 200;
@@ -1418,6 +1513,47 @@
     }
 
     let handResultTimer = null;
+    const HAND_RESULT_AUTO_KEY = 'wkapp45.handResultAutoAdvance';
+    const HAND_RESULT_AUTO_MS = 5000;
+
+    function getHandResultAutoAdvance() {
+      try { return localStorage.getItem(HAND_RESULT_AUTO_KEY) === '1'; }
+      catch (e) { return false; }
+    }
+    function setHandResultAutoAdvance(on) {
+      try { localStorage.setItem(HAND_RESULT_AUTO_KEY, on ? '1' : '0'); }
+      catch (e) { /* ignore */ }
+    }
+
+    // Count tricks won per team for the hand ending at the given hand_scored event.
+    function tricksTakenByTeam(handScoredEv) {
+      const tricks = { 0: 0, 1: 0 };
+      const scoredSeq = Number(handScoredEv.seq_no);
+      for (let i = app.events.length - 1; i >= 0; i--) {
+        const e = app.events[i];
+        const seq = Number(e.seq_no);
+        if (seq >= scoredSeq) continue;
+        if (e.event_type === 'hand_dealt') break;
+        if (TRICK_WINNER_EVENT_TYPES.indexOf(e.event_type) === -1) continue;
+        const ws = (e.payload && (e.payload.winner_seat ?? e.payload.winning_seat));
+        if (ws == null) continue;
+        const seat = Number(ws);
+        const player = playerBySeat(seat);
+        if (!player) continue;
+        const team = Number(player.team);
+        if (team === 0 || team === 1) tricks[team]++;
+      }
+      return tricks;
+    }
+
+    function hideHandResult() {
+      const overlay = document.getElementById('handResult');
+      if (overlay) overlay.style.display = 'none';
+      if (handResultTimer) {
+        clearTimeout(handResultTimer);
+        handResultTimer = null;
+      }
+    }
 
     function showHandResult(ev) {
       const p = ev.payload || {};
@@ -1434,9 +1570,12 @@
       const bidLabel  = is3060 ? '30-for-60' : String(bidValue);
       const bidderName = teamLabel(bidTeam);
 
-      const titleEl  = document.getElementById('hrTitle');
-      const scoresEl = document.getElementById('hrScores');
-      const overlay  = document.getElementById('handResult');
+      const titleEl   = document.getElementById('hrTitle');
+      const scoresEl  = document.getElementById('hrScores');
+      const tricksEl  = document.getElementById('hrTricks');
+      const overlay   = document.getElementById('handResult');
+      const continueBtn = document.getElementById('hrContinueBtn');
+      const autoCheck   = document.getElementById('hrAutoAdvance');
       if (!titleEl || !scoresEl || !overlay) return;
 
       titleEl.className = 'hr-title ' + (bidMade ? 'made' : 'lost');
@@ -1457,12 +1596,35 @@
       scoresEl.appendChild(document.createElement('br'));
       scoresEl.appendChild(makeScoreLine(teamLabel(1), d1, t1, target));
 
+      if (tricksEl) {
+        const tricks = tricksTakenByTeam(ev);
+        tricksEl.textContent = 'Tricks: ' + teamLabel(0) + ' ' + tricks[0]
+                              + ' · ' + teamLabel(1) + ' ' + tricks[1];
+      }
+
+      if (autoCheck) {
+        autoCheck.checked = getHandResultAutoAdvance();
+        autoCheck.onchange = function() {
+          setHandResultAutoAdvance(autoCheck.checked);
+          // If user just turned auto-advance ON while modal is open, start the timer now.
+          if (autoCheck.checked && handResultTimer === null && overlay.style.display !== 'none') {
+            handResultTimer = setTimeout(hideHandResult, HAND_RESULT_AUTO_MS);
+          } else if (!autoCheck.checked && handResultTimer !== null) {
+            clearTimeout(handResultTimer);
+            handResultTimer = null;
+          }
+        };
+      }
+      if (continueBtn) {
+        continueBtn.onclick = hideHandResult;
+      }
+
       overlay.style.display = '';
       if (handResultTimer) clearTimeout(handResultTimer);
-      handResultTimer = setTimeout(function() {
-        overlay.style.display = 'none';
-        handResultTimer = null;
-      }, 3500);
+      handResultTimer = null;
+      if (getHandResultAutoAdvance()) {
+        handResultTimer = setTimeout(hideHandResult, HAND_RESULT_AUTO_MS);
+      }
     }
 
     function syncHandResult(previousMaxSeq) {
@@ -1484,12 +1646,17 @@
     function seatDisplayName(seat) {
       if (seat === null || seat === undefined) return '?';
       const p = playerBySeat(Number(seat));
-      return p ? displayNameForPlayer(p) : 'Seat ' + seat;
+      return p ? displayNameForPlayer(p) : ('Seat ' + (Number(seat) + 1));
     }
 
     // -------------------------------------------------------------------------
     // Friendly event descriptions
     // -------------------------------------------------------------------------
+
+    // 'You play' but 'Margaret plays' — pick the right verb form for the actor.
+    function actorPhrase(actor, verbStem) {
+      return actor === 'You' ? (actor + ' ' + verbStem) : (actor + ' ' + verbStem + 's');
+    }
 
     function friendlyEventText(ev) {
       const p = ev.payload || {};
@@ -1501,35 +1668,40 @@
         case 'bid_action':
           return p.bid === 'pass' ? actor + ' passed' : actor + ' bid ' + p.bid;
         case 'forced_dealer_bid':
-          return actor + ' forced to bid 15';
+          return actor === 'You' ? 'You were forced to bid 15' : actor + ' was forced to bid 15';
         case 'bidding_closed': {
           const winner = seatDisplayName(p.winning_seat);
-          return winner + ' wins the bid (' + (p.winning_bid ?? '?') + ')';
+          return actorPhrase(winner, 'win') + ' the bid (' + (p.winning_bid ?? '?') + ')';
         }
         case 'trump_declared': {
-          const suit = SUIT_NAME[p.trump] || p.trump || '?';
-          const sym  = SUIT_SYM[p.trump]  || '';
-          return actor + ' declares ' + suit + ' ' + sym + ' as trump';
+          // Server payload uses trump_suit; older events may have used trump.
+          const code = p.trump_suit || p.trump || '';
+          const suit = SUIT_NAME[code] || code || '?';
+          const sym  = SUIT_SYM[code]  || '';
+          return actorPhrase(actor, 'declare') + ' ' + suit + ' ' + sym + ' as trump';
         }
         case 'kitty_picked_up':
-          return actor + ' picks up the kitty';
+          return actorPhrase(actor, 'pick') + ' up the kitty';
         case 'discard_action': {
-          const n = p.count != null ? p.count : (Array.isArray(p.cards) ? p.cards.length : '?');
-          return actor + ' discards ' + n + ' card' + (n === 1 ? '' : 's');
+          // Server payload uses 'discarded' (array of card codes).
+          const n = Array.isArray(p.discarded) ? p.discarded.length
+                  : (p.count != null ? p.count
+                  : (Array.isArray(p.cards) ? p.cards.length : 0));
+          return actorPhrase(actor, 'discard') + ' ' + n + ' card' + (n === 1 ? '' : 's');
         }
-        case 'dealer_draw_extra':   return actor + ' draws extra cards (dealer kitty)';
-        case 'dealer_draw_discard': return actor + ' discards extra cards (dealer)';
+        case 'dealer_draw_extra':   return actorPhrase(actor, 'draw') + ' extra cards (dealer kitty)';
+        case 'dealer_draw_discard': return actorPhrase(actor, 'discard') + ' extra cards (dealer)';
         case 'trick_play_started':  return 'Trick play begins';
         case 'card_played': {
           const card = p.card ? cardLabel(p.card) : '?';
-          return actor + ' plays ' + card;
+          return actorPhrase(actor, 'play') + ' ' + card;
         }
         case 'trick_won':
         case 'trick_resolved':
         case 'trick_completed': {
           const winner = seatDisplayName(p.winner_seat ?? p.winning_seat);
           const tn = p.trick_number != null ? ' (trick ' + p.trick_number + ')' : '';
-          return winner + ' wins the trick' + tn;
+          return actorPhrase(winner, 'win') + ' the trick' + tn;
         }
         case 'hand_scored':  return 'Hand scored';
         case 'game_over':    return 'Game over';
@@ -1578,8 +1750,10 @@
         const high = currentHighBid();
         const isDealer = Number(g.dealer_seat) === Number(app.viewerSeat);
         const hintText = high > 0
-          ? 'Current high: ' + high + (isDealer ? ' — match to steal, or raise' : ' — bid higher or pass')
-          : 'Opening bid';
+          ? (isDealer
+              ? 'Highest bid is ' + high + '. Match it to take the bid, or bid higher.'
+              : 'Highest bid is ' + high + '. Bid higher to take it, or pass.')
+          : 'Open the bidding';
         const card = mk('div', 'boa-card');
         card.appendChild(mk('div', 'boa-title', 'Your Bid'));
         card.appendChild(mk('div', 'boa-hint', hintText));
@@ -1591,11 +1765,21 @@
           var tooLow = high > 0 && (isDealer ? b < high : b <= high);
           var label = b === 60 ? '30-for-60' : String(b);
           var btn = mk('button', null, label);
+          if (b === 60) btn.title = 'Bid 30 to win 60: a special bid worth double points if you make it, double the loss if you miss it.';
           if (tooLow) btn.disabled = true;
           btn.onclick = (function(bid) { return function() { submitBid(bid); }; })(b);
           btns.appendChild(btn);
         });
         card.appendChild(btns);
+        // Read-only mini-hand inside the modal so the user can see their cards
+        // without scrolling. Bidding has no trump yet, so highlights are off.
+        if (Array.isArray(app.viewerHand) && app.viewerHand.length > 0) {
+          const previewRow = mk('div', 'boa-hand');
+          for (let i = 0; i < app.viewerHand.length; i++) {
+            previewRow.appendChild(cardChipEl(app.viewerHand[i], null, []));
+          }
+          card.appendChild(previewRow);
+        }
         overlay.appendChild(card);
 
       } else if (phase === 'declare_trump' && myTurn) {
@@ -1614,6 +1798,15 @@
           btns.appendChild(btn);
         });
         card.appendChild(btns);
+        // Read-only mini-hand inside the modal so the user sees their cards
+        // while picking trump.
+        if (Array.isArray(app.viewerHand) && app.viewerHand.length > 0) {
+          const previewRow = mk('div', 'boa-hand');
+          for (let i = 0; i < app.viewerHand.length; i++) {
+            previewRow.appendChild(cardChipEl(app.viewerHand[i], null, []));
+          }
+          card.appendChild(previewRow);
+        }
         overlay.appendChild(card);
 
       } else if (phase === 'discard_phase' && seated) {
@@ -1624,9 +1817,17 @@
           card.appendChild(mk('div', 'boa-hint', 'Waiting for other players to discard…'));
         } else {
           const nSel = app.selectedDiscards.length;
-          const hintText = nSel === 0
-            ? 'Select cards in your hand to discard, then confirm'
-            : nSel + ' card' + (nSel > 1 ? 's' : '') + ' selected — or confirm to keep all';
+          const handLen = Array.isArray(app.viewerHand) ? app.viewerHand.length : 5;
+          const isBidWinner = app.hand && Number(app.hand.bid_winner_seat) === Number(app.viewerSeat);
+          let hintText;
+          if (nSel === 0) {
+            hintText = isBidWinner
+              ? 'Click cards in your hand to discard. You need to keep 5.'
+              : 'Click cards to discard, or click Keep All to keep your hand.';
+          } else {
+            hintText = 'Discard ' + nSel + ' card' + (nSel === 1 ? '' : 's')
+                     + ' · keep ' + (handLen - nSel);
+          }
           card.appendChild(mk('div', 'boa-title', 'Discard'));
           const trump = app.hand ? app.hand.trump_suit : null;
           if (trump) {
@@ -1642,7 +1843,10 @@
           hintEl.id = 'discardHint';
           card.appendChild(hintEl);
           const btns = mk('div', 'boa-btns');
-          const confirmBtn = mk('button', null, 'Confirm Discard');
+          const confirmLabel = nSel === 0
+            ? (isBidWinner ? 'Confirm' : 'Keep All')
+            : 'Confirm Discard';
+          const confirmBtn = mk('button', null, confirmLabel);
           confirmBtn.onclick = discardCards;
           btns.appendChild(confirmBtn);
           card.appendChild(btns);
@@ -1725,14 +1929,18 @@
         bar.appendChild(pill);
       }
 
-      // Contract
+      // Bid winner + bid value
       const bidWinner = h.bid_winner_seat != null ? Number(h.bid_winner_seat) : null;
       const bidValue  = h.bid_value != null ? Number(h.bid_value) : null;
       if (bidWinner !== null && bidValue !== null) {
         const label = bidValue === 60 ? '30-for-60' : String(bidValue);
+        const isViewerBidder = Number(bidWinner) === Number(app.viewerSeat);
         const pill = mk('div', 'info-pill');
-        pill.appendChild(mk('span', 'label', 'Contract'));
-        pill.appendChild(document.createTextNode(seatDisplayName(bidWinner) + ' — ' + label));
+        pill.appendChild(mk('span', 'label', isViewerBidder ? 'Your bid' : 'Bid'));
+        const text = isViewerBidder
+          ? label
+          : (seatDisplayName(bidWinner) + ' bid ' + label);
+        pill.appendChild(document.createTextNode(text));
         bar.appendChild(pill);
       }
 
@@ -1743,10 +1951,17 @@
       const s1 = Number(sc.team1_sets  ?? 0);
       const target = Number(g.target_score || 120);
 
+      // Render small set count as a word so "One Set" reads better than "1 set".
+      const SET_WORDS = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'];
+      const setLabel = function(n) {
+        if (n <= 0) return '';
+        const word = SET_WORDS[n] || String(n);
+        return word + (n === 1 ? ' Set' : ' Sets');
+      };
       const makeScorePill = function(teamNum, total, sets, extraCls) {
         const pill = mk('div', 'info-pill' + extraCls);
         pill.appendChild(mk('span', 'label', teamLabel(teamNum)));
-        const scoreText = total + '/' + target + (sets > 0 ? ' · ' + sets + ' set' + (sets > 1 ? 's' : '') : '');
+        const scoreText = total + '/' + target + (sets > 0 ? ' · ' + setLabel(sets) : '');
         pill.appendChild(document.createTextNode(scoreText));
         return pill;
       };
@@ -1779,7 +1994,8 @@
 
     function seatName(seat) {
       const n = Number(seat);
-      return Number.isInteger(n) ? ('Seat ' + n) : 'Seat ?';
+      // Seats are stored 0-based internally but displayed 1-based for humans.
+      return Number.isInteger(n) ? ('Seat ' + (n + 1)) : 'Seat ?';
     }
 
     function status(text, level) {
@@ -1844,7 +2060,7 @@
     function displayNameForPlayer(p) {
       if (!p) return 'Open';
       if (Number(p.user_id) === Number(app.me && app.me.user_id)) return 'You';
-      if (Number(p.is_ai) === 1) return 'AI';
+      if (Number(p.is_ai) === 1) return p.display_name || 'AI';
       if (p.user_id) return p.display_name || p.username || ('Player #' + p.user_id);
       return 'Open Seat';
     }
@@ -1917,7 +2133,7 @@
       const nameDiv = mk('div', 'player-name');
       nameDiv.appendChild(playerNameEl(p));
       nameDiv.appendChild(document.createTextNode(' '));
-      const seatSpan = mk('span', null, 'Seat ' + seat);
+      const seatSpan = mk('span', null, 'Seat ' + (Number(seat) + 1));
       seatSpan.style.cssText = 'font-weight:400;color:var(--muted);font-size:12px';
       nameDiv.appendChild(seatSpan);
       zone.appendChild(nameDiv);
@@ -1926,6 +2142,16 @@
       const metaDiv = mk('div', 'player-meta');
       metaDiv.textContent = statusBits.length ? statusBits.join(' · ') : ' ';
       zone.appendChild(metaDiv);
+
+      // Tricks-this-hand pill (only relevant once trick play has started)
+      if (seat !== null && (phase === 'trick_play' || phase === 'score_hand')) {
+        const tricks = deriveTricksThisHand();
+        const tcount = Number(tricks[seat] || 0);
+        const pill = mk('div', 'tricks-pill');
+        pill.appendChild(document.createTextNode('Tricks '));
+        pill.appendChild(mk('span', 'tn', String(tcount)));
+        zone.appendChild(pill);
+      }
 
       // Hand
       const handDiv = document.createElement('div');
@@ -2021,6 +2247,31 @@
       }
 
       return { table, stacks, unresolvedTricks };
+    }
+
+    /**
+     * Tricks won this hand, indexed by seat. Scoped to events after the
+     * latest hand_dealt — counts trick_won/trick_resolved/trick_completed.
+     */
+    function deriveTricksThisHand() {
+      var handDealtSeq = 0;
+      for (var i = app.events.length - 1; i >= 0; i--) {
+        if (app.events[i].event_type === 'hand_dealt') {
+          handDealtSeq = Number(app.events[i].seq_no);
+          break;
+        }
+      }
+      var counts = {};
+      for (var j = 0; j < app.events.length; j++) {
+        var e = app.events[j];
+        if (Number(e.seq_no) <= handDealtSeq) continue;
+        if (TRICK_WINNER_EVENT_TYPES.indexOf(e.event_type) === -1) continue;
+        var ws = e.payload && (e.payload.winner_seat ?? e.payload.winning_seat);
+        if (ws == null) continue;
+        var seat = Number(ws);
+        counts[seat] = (counts[seat] || 0) + 1;
+      }
+      return counts;
     }
 
     /**
@@ -2208,9 +2459,9 @@
       if (kittyPickedUp) {
         const who = firstEventType('kitty_picked_up');
         const seat = who && who.payload && Number.isInteger(who.payload.winner_seat) ? who.payload.winner_seat : winnerSeat;
-        rows.push(flowRow('Bid Winner + Kitty', 'done', 'Seat ' + (seat !== null ? seat : '?') + ' received kitty.'));
+        rows.push(flowRow('Bid Winner + Kitty', 'done', 'Seat ' + (seat !== null ? (seat + 1) : '?') + ' received kitty.'));
       } else if (biddingClosed || forcedDealerBid) {
-        const winnerText = winnerSeat !== null ? ('Seat ' + winnerSeat) : 'Dealer';
+        const winnerText = winnerSeat !== null ? ('Seat ' + (winnerSeat + 1)) : 'Dealer';
         const bidText = winningBid !== null ? (' with bid ' + winningBid) : '';
         rows.push(flowRow('Bid Winner + Kitty', 'active', winnerText + bidText + ' waiting for kitty_picked_up event.'));
       } else if (phase === 'trick_play') {
@@ -2382,7 +2633,7 @@
       const me = app.me || {};
       const myName = me.display_name || me.nickname || me.username || (me.user_id ? 'User #' + me.user_id : '—');
       byId('viewerMeta').textContent = Number.isInteger(app.viewerSeat)
-        ? myName + ' · Seat ' + app.viewerSeat
+        ? myName + ' · Seat ' + (app.viewerSeat + 1)
         : myName;
 
       byId('phaseMeta').textContent = phaseFriendly;

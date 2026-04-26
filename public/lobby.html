@@ -1261,7 +1261,7 @@
                 <div class="seat-row">
                   <div class="seat-row-top">
                     <div class="seat-info">
-                      <span class="seat-num">0</span>
+                      <span class="seat-num">1</span>
                       <span class="seat-name">You</span>
                     </div>
                     <span class="team-tag team-a">your team</span>
@@ -1753,7 +1753,7 @@
 
       const info = document.createElement('div');
       info.className = 'seat-info';
-      info.appendChild(mk('span', 'seat-num', String(seat)));
+      info.appendChild(mk('span', 'seat-num', String(seat + 1)));
       info.appendChild(mk('span', 'team-tag ' + teamClass, teamLabel));
 
       const btns = document.createElement('div');
@@ -2008,10 +2008,27 @@
       badge.textContent = STATUS_LABELS[g.status] || g.status;
       div.appendChild(badge);
 
-      const pts = document.createElement('span');
-      pts.className = 'meta-pill';
-      pts.textContent = g.target_score + ' pts';
-      div.appendChild(pts);
+      // Live score chip: only meaningful for active/finished games.
+      // Reordered relative to the viewer when we can identify their team.
+      if (g.status === 'active' || g.status === 'finished') {
+        const t0 = Number(g.team0_total || 0);
+        const t1 = Number(g.team1_total || 0);
+        const me = (g.players || []).find(p => String(p.user_id) === String(state.userId));
+        const myTeam = me != null ? Number(me.team) : null;
+        const myScore  = myTeam === 1 ? t1 : t0;
+        const oppScore = myTeam === 1 ? t0 : t1;
+        const score = document.createElement('span');
+        score.className = 'meta-pill';
+        score.textContent = myTeam === null
+          ? (t0 + ' vs ' + t1 + ' / ' + g.target_score)
+          : ('You ' + myScore + ' · Them ' + oppScore + ' / ' + g.target_score);
+        div.appendChild(score);
+      } else {
+        const pts = document.createElement('span');
+        pts.className = 'meta-pill';
+        pts.textContent = g.target_score + ' pts';
+        div.appendChild(pts);
+      }
 
       const id = document.createElement('span');
       id.className = 'game-id';
