@@ -539,10 +539,11 @@
 
     /* South zone: full-width tray that overlaps the bottom of the felt so
        the viewer's cards visually sit on the table without the user having
-       to scroll past it. column-reverse puts the hand at the top of the
-       zone (so it lands on the felt) and the name/meta/pill underneath.
-       The negative margin matches the zone-south card height so the cards
-       precisely overlap the bottom edge of the felt. */
+       to scroll past it. The hand renders first (it lands on the felt
+       thanks to the negative margin-top) followed by a horizontal status
+       strip that mirrors the top info bar. z-index keeps the whole zone
+       above the .center stacking layer so the cards aren't masked by the
+       translucent center underlay or the kitty display. */
     .zone-south {
       position: relative;
       left: auto;
@@ -550,19 +551,40 @@
       transform: none;
       width: 100%;
       max-width: 100%;
-      padding: 8px 20px 12px;
+      padding: 0 20px 8px;
       margin-top: -132px;
-      z-index: 4;
+      z-index: 10;
       box-shadow: none;
       border-top: 0;
       background: transparent;
       display: flex;
-      flex-direction: column-reverse;
+      flex-direction: column;
       align-items: stretch;
-      gap: 4px;
+      gap: 6px;
     }
-    .zone-south .player-name { color: var(--ink); text-align: center; }
-    .zone-south .player-meta { text-align: center; }
+    /* Mini info bar mirroring .info-bar's look, sitting under the hand. */
+    .viewer-status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 14px;
+      background: var(--paper2);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+    }
+    /* Bid badge appears here as a normal chip rather than its absolute
+       hanging-tag form. */
+    .viewer-status .bid-badge {
+      position: static;
+      bottom: auto;
+      left: auto;
+      font-size: 11px;
+      padding: 4px 12px;
+      letter-spacing: 0.5px;
+    }
     .zone-south .hand {
       justify-content: center;
       gap: 6px;
@@ -2147,21 +2169,19 @@
       const seatSpan = mk('span', null, 'Seat ' + (Number(seat) + 1));
       seatSpan.style.cssText = 'font-weight:400;color:var(--muted);font-size:12px';
       nameDiv.appendChild(seatSpan);
-      zone.appendChild(nameDiv);
 
       // Meta row
       const metaDiv = mk('div', 'player-meta');
       metaDiv.textContent = statusBits.length ? statusBits.join(' · ') : ' ';
-      zone.appendChild(metaDiv);
-
       // Tricks-this-hand pill (only relevant once trick play has started)
+      let tricksPill = null;
+      let tricksCount = 0;
       if (seat !== null && (phase === 'trick_play' || phase === 'score_hand')) {
         const tricks = deriveTricksThisHand();
-        const tcount = Number(tricks[seat] || 0);
-        const pill = mk('div', 'tricks-pill');
-        pill.appendChild(document.createTextNode('Tricks '));
-        pill.appendChild(mk('span', 'tn', String(tcount)));
-        zone.appendChild(pill);
+        tricksCount = Number(tricks[seat] || 0);
+        tricksPill = mk('div', 'tricks-pill');
+        tricksPill.appendChild(document.createTextNode('Tricks '));
+        tricksPill.appendChild(mk('span', 'tn', String(tricksCount)));
       }
 
       // Hand
@@ -2193,9 +2213,43 @@
           handDiv.appendChild(mk('div', 'card-chip back'));
         }
       }
-      zone.appendChild(handDiv);
+      if (side === 'south') {
+        // Hand first so it lands on the felt thanks to the negative
+        // margin-top; the status strip below mirrors the top info bar.
+        zone.appendChild(handDiv);
+        const status = mk('div', 'viewer-status');
 
-      if (bidBadgeEl) zone.appendChild(bidBadgeEl);
+        const nameChip = mk('div', 'info-pill');
+        nameChip.appendChild(playerNameEl(p));
+        nameChip.appendChild(document.createTextNode(' · Seat ' + (Number(seat) + 1)));
+        status.appendChild(nameChip);
+
+        if (p) {
+          const teamChip = mk('div', 'info-pill');
+          teamChip.appendChild(mk('span', 'label', 'Team'));
+          teamChip.appendChild(document.createTextNode(String(Number(p.team) + 1)));
+          status.appendChild(teamChip);
+        }
+
+        if (tricksPill) {
+          const trickChip = mk('div', 'info-pill');
+          trickChip.appendChild(mk('span', 'label', 'Tricks'));
+          trickChip.appendChild(document.createTextNode(String(tricksCount)));
+          status.appendChild(trickChip);
+        }
+
+        if (bidBadgeEl) {
+          status.appendChild(bidBadgeEl);
+        }
+
+        zone.appendChild(status);
+      } else {
+        zone.appendChild(nameDiv);
+        zone.appendChild(metaDiv);
+        if (tricksPill) zone.appendChild(tricksPill);
+        zone.appendChild(handDiv);
+        if (bidBadgeEl) zone.appendChild(bidBadgeEl);
+      }
       if (turnEl) zone.appendChild(turnEl);
 
       // Attach card click listeners for the viewer's zone
