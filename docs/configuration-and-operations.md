@@ -114,6 +114,16 @@ The migration file is `sql/migrate_add_avatar.sql`.
 - `avatar_code` — one of 20 card-suit/colour codes (e.g. `s-teal`, `h-rose`). When null, the frontend falls back to the user's Gravatar (MD5 of email, `d=identicon`).
 - `nickname` — optional free-text display name (max 60 chars, not unique). Shown everywhere instead of username. `COALESCE(nickname, username)` is the canonical display-name expression used in all queries.
 
+The `game_players` table has a per-game display name added so AI seats can wear curated family names without polluting the `users` table. To apply it to an existing database run:
+
+```sql
+ALTER TABLE game_players ADD COLUMN IF NOT EXISTS display_name VARCHAR(60) NULL DEFAULT NULL;
+```
+
+The migration file is `sql/migrate_add_ai_display_name.sql`.
+
+- `display_name` on `game_players` — optional override that wins over the joined `users.nickname`/`users.username`. Assigned at game creation by the lobby route, picking distinct names from the family pool (`George, Herve, Cora, Lucienne, Alice, Gene, Jules, Roland`) for each AI seat. The canonical resolution expression is `COALESCE(gp.display_name, u.nickname, u.username)`.
+
 ## Social Auth Configuration
 
 Social sign-in providers are configured in `server/config.php` under the `auth` key. Each provider is disabled when its value is an empty string. The `GET /api/auth/providers` endpoint reflects the current config; the frontend loads each SDK and shows the button only for configured providers.

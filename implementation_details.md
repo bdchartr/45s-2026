@@ -58,23 +58,38 @@ Last updated: 2026-04-20 (social auth update)
 **Game Board**
 - Heritage Pub Table aesthetic: dark walnut body, hunter green felt, parchment player zones
 - Fixed viewer perspective: current user always at south
-- Player zones: name, card backs, bid badges, dealer marker (✦ DEAL)
+- Seats are stored 0-based internally but displayed 1-based to humans
+- AI players are assigned a distinct family-pool name (George, Herve, Cora,
+  Lucienne, Alice, Gene, Jules, Roland) at game creation, persisted on
+  `game_players.display_name`. The frontend prefers `display_name` over
+  the joined `users.nickname`/`users.username`.
+- Player zones: name, card backs, bid badges, dealer marker (✦ DEAL),
+  per-player "Tricks N" pill showing tricks won in the current hand
 - Turn indicator pills hanging off the table-facing edge of each zone (animated gold pulse)
 - Board action overlay (frosted-glass panel on felt) for bid / trump / discard actions:
-  - Bidding: bid buttons with current high shown; dealer steal logic
-  - Trump declaration: suit buttons
-  - Discard: confirm button with live card-count hint
-- Info bar: trump suit, contract (player name + bid value), team scores with player names, hand/trick progress
+  - Bidding: bid buttons with current high shown; dealer steal logic; embedded
+    read-only mini-hand so the player sees their cards without scrolling
+  - Trump declaration: suit buttons; embedded mini-hand
+  - Discard: state-aware hint text ("Discard 3 cards · keep 5" /
+    "Click cards to discard, or Keep All"); confirm button switches label
+    between "Confirm Discard" / "Keep All"
+- Hand-end interstitial: modal with bid result, score deltas, tricks taken
+  per team, "Next hand" button. Per-user `Auto-advance after 5 seconds`
+  preference persisted in `localStorage` under `wkapp45.handResultAutoAdvance`.
+- Trick winner pacing: winning card holds with a maple glow for 1.4s before
+  the cards sweep to the winner.
+- Info bar: trump suit, "Your bid"/"Bid" pill (player name + bid value), team
+  scores ("75/120 · One Set"), hand/trick progress
 - Topbar chips: your name + seat, current phase (friendly)
 - Status panel below board: current phase + whose turn in plain language
-- Recent Events log: friendly sentences ("chartb bid 25") with raw JSON on hover
+- Recent Events log: friendly sentences with `You play / win / discard` for
+  the viewer and the `-s` form for everyone else ("Cora plays J♦")
 - Mini card chips (38×54 non-viewer, 46×66 viewer) with rank + suit symbol; playable cards lift on hover
 - Card counts on non-viewer zones reflect actual cards remaining (derived from events)
 - Fly animation when viewer plays a card (750ms arc from hand to center)
 - Directional trick card animations (cards slide in from each player's direction)
 - Trick collection animation (cards sweep to winner's stack)
 - Kitty shown face-down during bidding; merged into bid winner's hand after trump declared
-- Won-trick side stacks with counts
 - Clickable player names open profile modal
 
 **Game Engine**
@@ -214,7 +229,7 @@ AI turn pacing:
 `id`, `status` (lobby/active/finished/abandoned), `target_score`, `ruleset`, `player_count` (4 or 6), `dealer_seat`, `current_phase`, `current_turn_seat`, `hand_number`, `created_by_user_id`, `archived_at`, `created_at`, `updated_at`
 
 ### game_players
-`id`, `game_id` FK, `seat`, `user_id` nullable, `is_ai` bool, `team` (0/1), `connected` bool, `created_at`
+`id`, `game_id` FK, `seat`, `user_id` nullable, `is_ai` bool, `team` (0/1), `connected` bool, `display_name` (per-game override; assigned to AI seats from a curated family pool at game creation), `created_at`
 
 ### hands
 `id`, `game_id` FK, `hand_number`, `dealer_seat`, `bid_winner_seat`, `bid_value`, `is_30_for_60` bool, `trump_suit`, `deck_seed`, `kitty_json`, `deck_remaining_json`, `dealer_extra_draw_pending` bool

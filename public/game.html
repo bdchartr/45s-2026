@@ -200,7 +200,21 @@
 
     .player-zone.turn {
       border-color: var(--gold);
-      box-shadow: 0 0 0 3px rgba(166,122,45,0.5), 0 0 22px rgba(166,122,45,0.3), 0 6px 18px rgba(0,0,0,0.28);
+      animation: pz-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pz-pulse {
+      0%, 100% {
+        box-shadow:
+          0 0 0 3px rgba(166,122,45,0.55),
+          0 0 22px rgba(166,122,45,0.35),
+          0 6px 18px rgba(0,0,0,0.28);
+      }
+      50% {
+        box-shadow:
+          0 0 0 4px rgba(196,148,52,0.85),
+          0 0 36px rgba(196,148,52,0.55),
+          0 6px 18px rgba(0,0,0,0.28);
+      }
     }
 
     /* ── Turn indicator pill ── hangs off the table-facing edge */
@@ -2287,25 +2301,23 @@
           break;
         }
       }
-      // Count cards removed from each seat's hand since the deal.
-      var removed = {};
+      // The discard / dealer-draw-discard cycle is net-zero (each discarded
+      // card is replaced from the deck), so we only need to count cards
+      // actually played out of the hand. By the time trick play starts,
+      // every seat is back at 5.
+      var played = {};
       for (var i = 0; i < app.events.length; i++) {
         var e = app.events[i];
         if (e.seq_no <= handDealtSeq) continue;
+        if (e.event_type !== 'card_played') continue;
         var s = Number(e.actor_seat);
-        if (e.event_type === 'card_played') {
-          removed[s] = (removed[s] || 0) + 1;
-        } else if (e.event_type === 'discard_action' || e.event_type === 'dealer_draw_discard') {
-          var p = e.payload || {};
-          var n = Array.isArray(p.discarded) ? p.discarded.length : 0;
-          removed[s] = (removed[s] || 0) + n;
-        }
+        played[s] = (played[s] || 0) + 1;
       }
       var counts = {};
       if (Array.isArray(app.players)) {
         app.players.forEach(function(p) {
           var s = Number(p.seat);
-          counts[s] = Math.max(0, 5 - (removed[s] || 0));
+          counts[s] = Math.max(0, 5 - (played[s] || 0));
         });
       }
       return counts;
