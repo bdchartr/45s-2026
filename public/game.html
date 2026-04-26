@@ -1481,6 +1481,11 @@
     }
 
     let handResultTimer = null;
+    // True from the instant a new hand_scored event is detected until the
+    // user dismisses the resulting modal (or auto-advance fires). Used to
+    // suppress the board-action overlay so the bidding modal for the *next*
+    // hand can't pop up before the player has read the previous result.
+    let handResultActive = false;
     const HAND_RESULT_AUTO_KEY = 'wkapp45.handResultAutoAdvance';
     const HAND_RESULT_AUTO_MS = 5000;
 
@@ -1521,6 +1526,10 @@
         clearTimeout(handResultTimer);
         handResultTimer = null;
       }
+      handResultActive = false;
+      // Re-render so the bidding/discard overlay for the new hand can take
+      // its turn now that the player has acknowledged the result.
+      renderBoardOverlay();
     }
 
     function showHandResult(ev) {
@@ -1601,6 +1610,11 @@
       for (let i = app.events.length - 1; i >= 0; i--) {
         const ev = app.events[i];
         if (ev.event_type === 'hand_scored' && Number(ev.seq_no) > previousMaxSeq) {
+          // Flip the suppression flag immediately — the server has already
+          // dealt the next hand and the bidding overlay would otherwise
+          // race ahead of our delayed score-summary modal.
+          handResultActive = true;
+          renderBoardOverlay();
           setTimeout(function() { showHandResult(ev); }, animDelay);
           break;
         }
@@ -1701,6 +1715,14 @@
       // While an action is in-flight, hide the overlay so buttons can't be
       // clicked again and re-renders don't expose stale buttons.
       if (app.actionInProgress) {
+        overlay.style.display = 'none';
+        return;
+      }
+
+      // Hand-result modal is pending or visible — keep the next hand's
+      // bidding/discard overlay suppressed until the player dismisses it,
+      // so the flow reads: last trick → score summary → bid prompt.
+      if (handResultActive) {
         overlay.style.display = 'none';
         return;
       }
