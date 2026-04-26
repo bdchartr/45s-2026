@@ -823,48 +823,6 @@
       visibility: hidden;
     }
 
-    /* Per-direction trick stack indicator. Hidden in favour of the
-       per-player Tricks pill rendered inside each player zone, but kept
-       in the DOM so the trick-sweep animation can target it. */
-    .stack {
-      position: absolute;
-      width: 64px;
-      min-height: 68px;
-      border: 1px dashed rgba(255,255,255,0.38);
-      border-radius: 12px;
-      color: rgba(255,255,255,0.85);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-      background: rgba(0,0,0,0.16);
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-family: 'Work Sans', system-ui, sans-serif;
-      visibility: hidden;
-    }
-
-    .stack-count {
-      width: 28px;
-      height: 40px;
-      border-radius: 5px;
-      border: 1px solid rgba(255,255,255,0.55);
-      background: rgba(255,255,255,0.18);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 15px;
-      font-weight: 700;
-      transform: rotate(90deg);
-    }
-
-    .stack-north { top: 10px; right: 10px; }
-    .stack-south { bottom: 10px; right: 10px; }
-    .stack-west { left: 10px; bottom: 10px; }
-    .stack-east { right: 10px; bottom: 96px; }
-
     /* ── Controls / Panel ── */
     .controls {
       display: grid;
@@ -1097,8 +1055,6 @@
       .card-chip .c-suit { font-size: 16px; }
       .table-card .c-rank { font-size: 11px; }
       .table-card .c-suit { font-size: 24px; }
-      .stack { width: 58px; }
-      .stack-count { width: 24px; height: 34px; }
       .flow-row { grid-template-columns: 1fr; gap: 2px; }
       .info-bar { gap: 6px; padding: 8px 12px; }
     }
@@ -1148,11 +1104,6 @@
       <section class="center" id="center">
         <div class="center-label" id="centerLabel">Waiting for trick play</div>
       </section>
-
-      <section class="stack stack-north"><div>N</div><div class="stack-count" id="stack-north">0</div></section>
-      <section class="stack stack-south"><div>S</div><div class="stack-count" id="stack-south">0</div></section>
-      <section class="stack stack-west"><div>W</div><div class="stack-count" id="stack-west">0</div></section>
-      <section class="stack stack-east"><div>E</div><div class="stack-count" id="stack-east">0</div></section>
 
       <div class="boa" id="boardActionOverlay" style="display:none"></div>
       <div id="handResult" class="hand-result" style="display:none">
@@ -1400,8 +1351,11 @@
 
       anim.phase = 'collecting';
       const center = byId('center');
-      const stack = anim.winnerSide ? document.querySelector('.stack-' + anim.winnerSide) : null;
-      if (!center || !stack) {
+      // Fly the trick to the winner's player zone instead of a separate
+      // corner stack — the per-player Tricks pill there is the new visual
+      // home for trick counts.
+      const target = anim.winnerSide ? byId('zone-' + anim.winnerSide) : null;
+      if (!center || !target) {
         renderCenter();
         return;
       }
@@ -1409,10 +1363,10 @@
       removeTrickCollectionCards();
 
       const centerRect = center.getBoundingClientRect();
-      const stackRect = stack.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
       const metrics = getTableCardMetrics();
-      const targetLeft = stackRect.left + (stackRect.width / 2) - centerRect.left - (metrics.width / 2);
-      const targetTop = stackRect.top + (stackRect.height / 2) - centerRect.top - (metrics.height / 2);
+      const targetLeft = targetRect.left + (targetRect.width / 2) - centerRect.left - (metrics.width / 2);
+      const targetTop = targetRect.top + (targetRect.height / 2) - centerRect.top - (metrics.height / 2);
       const offsets = [
         { x: -6, y: -5 },
         { x: 5, y: -2 },
@@ -2219,10 +2173,11 @@
       }
     }
 
-    function deriveTableAndStacks() {
+    // Returns the cards currently sitting in the middle of the table, keyed
+    // by viewer-relative side (north/south/east/west). Only the cards from
+    // the in-progress trick — completed tricks have already been swept.
+    function deriveTrickTable() {
       const table = { north: null, south: null, east: null, west: null };
-      const stacks = { north: 0, south: 0, east: 0, west: 0 };
-      let unresolvedTricks = 0;
       let current = [];
 
       for (let i = 0; i < app.events.length; i++) {
@@ -2236,20 +2191,6 @@
         });
 
         if (current.length === 4) {
-          let winnerSeat = null;
-          const next = app.events[i + 1] || null;
-          if (next && (next.event_type === 'trick_won' || next.event_type === 'trick_resolved' || next.event_type === 'trick_completed')) {
-            const cand = next.payload && (next.payload.winner_seat ?? next.payload.winning_seat);
-            if (Number.isInteger(cand)) winnerSeat = cand;
-          }
-
-          if (winnerSeat !== null) {
-            const winnerSide = sideForSeat(winnerSeat);
-            if (winnerSide) stacks[winnerSide] += 1;
-          } else {
-            unresolvedTricks += 1;
-          }
-
           current = [];
         }
       }
@@ -2260,7 +2201,7 @@
         if (side) table[side] = item.card;
       }
 
-      return { table, stacks, unresolvedTricks };
+      return { table };
     }
 
     /**
@@ -2533,20 +2474,10 @@
     function renderCenter() {
       const center = byId('center');
       const label = byId('centerLabel');
-      const derived = deriveTableAndStacks();
+      const derived = deriveTrickTable();
       const trump = app.hand ? app.hand.trump_suit : null;
       const activeAnimation = app.trickAnimation;
       const displayTable = activeAnimation ? activeAnimation.table : derived.table;
-      const displayStacks = {
-        north: derived.stacks.north,
-        south: derived.stacks.south,
-        west: derived.stacks.west,
-        east: derived.stacks.east,
-      };
-
-      if (activeAnimation && activeAnimation.winnerSide && displayStacks[activeAnimation.winnerSide] > 0) {
-        displayStacks[activeAnimation.winnerSide] -= 1;
-      }
 
       // ── Trick cards — only add/remove when card actually changes ──
       ['north', 'south', 'west', 'east'].forEach(function (side) {
@@ -2597,11 +2528,6 @@
           label.textContent = cardsInMiddle + ' card' + (cardsInMiddle > 1 ? 's' : '') + ' in play';
         }
       }
-
-      byId('stack-north').textContent = String(displayStacks.north);
-      byId('stack-south').textContent = String(displayStacks.south);
-      byId('stack-west').textContent = String(displayStacks.west);
-      byId('stack-east').textContent = String(displayStacks.east);
 
       // actionHint removed (was debug text)
     }
