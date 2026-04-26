@@ -12,6 +12,9 @@ DirectoryIndex index.php
   # Serve HTML pages from public/ without changing the URL
   RewriteRule ^(game|lobby|admin|player)\.html$ public/$1.html [L]
 
+  # Serve player-modal.js from public/
+  RewriteRule ^player-modal\.js$ public/player-modal.js [L]
+
   RewriteCond %{REQUEST_URI} !^/45/public/
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d

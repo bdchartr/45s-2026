@@ -2100,9 +2100,17 @@
 
     function playerNameEl(p) {
       const name = displayNameForPlayer(p);
-      if (!p || !p.user_id || Number(p.is_ai) === 1) {
-        return document.createTextNode(name);
+      if (!p) return document.createTextNode(name);
+      if (Number(p.is_ai) === 1) {
+        const span = document.createElement('span');
+        span.style.cssText = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px';
+        span.textContent = name;
+        span.addEventListener('click', (function(desc) { return function() { openPlayerModal(desc); }; })(
+          { kind: 'ai', display_name: p.display_name || name, seat: p.seat }
+        ));
+        return span;
       }
+      if (!p.user_id) return document.createTextNode(name);
       const span = document.createElement('span');
       span.style.cssText = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px';
       span.textContent = name;

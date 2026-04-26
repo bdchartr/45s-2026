@@ -907,7 +907,17 @@ final class RoutesIntegrationTest extends TestCase
                 user_id INTEGER NULL,
                 is_ai INTEGER NOT NULL DEFAULT 0,
                 team INTEGER NOT NULL DEFAULT 0,
-                connected INTEGER NOT NULL DEFAULT 1
+                connected INTEGER NOT NULL DEFAULT 1,
+                display_name TEXT NULL
+            )'
+        );
+
+        $pdo->exec(
+            'CREATE TABLE hands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                hand_number INTEGER NOT NULL DEFAULT 1,
+                bid_winner_seat INTEGER NULL
             )'
         );
 
@@ -917,7 +927,9 @@ final class RoutesIntegrationTest extends TestCase
                 game_id INTEGER NOT NULL,
                 hand_id INTEGER NOT NULL,
                 team0_total INTEGER NOT NULL DEFAULT 0,
-                team1_total INTEGER NOT NULL DEFAULT 0
+                team1_total INTEGER NOT NULL DEFAULT 0,
+                team0_delta INTEGER NOT NULL DEFAULT 0,
+                team1_delta INTEGER NOT NULL DEFAULT 0
             )'
         );
 

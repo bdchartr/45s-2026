@@ -950,6 +950,8 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'user_not_found'], 404);
             }
 
+            $includeAi = !empty($params['include_ai']);
+
             return $json($response, [
                 'ok'    => true,
                 'user'  => [
@@ -961,8 +963,9 @@ final class Routes
                     'gravatar_url' => 'https://www.gravatar.com/avatar/' . md5(strtolower(trim((string) ($user['email'] ?? '')))) . '?s=80&d=identicon',
                     'role'         => (string) ($user['role'] ?? 'player'),
                     'member_since' => substr((string) ($user['created_at'] ?? ''), 0, 10),
+                    'email'        => (int) $authn['user_id'] === $targetUserId ? (string) ($user['email'] ?? '') : null,
                 ],
-                'stats' => $repo->statsForUser($targetUserId),
+                'stats' => $repo->statsForUser($targetUserId, $includeAi),
             ]);
         });
 
@@ -1045,6 +1048,32 @@ final class Routes
 
             $repo->updatePassword($userId, password_hash($newPassword, PASSWORD_DEFAULT));
             return $json($response, ['ok' => true]);
+        });
+
+        $app->post('/api/player/update_email', function (ServerRequestInterface $request, ResponseInterface $response) use ($json, $requireAuthenticated, $requireCsrf): ResponseInterface {
+            $csrfError = $requireCsrf($request, $response);
+            if ($csrfError !== null) {
+                return $csrfError;
+            }
+
+            $authn = $requireAuthenticated($response);
+            if (isset($authn['error_response'])) {
+                return $authn['error_response'];
+            }
+
+            /** @var GameRepository $repo */
+            $repo   = $authn['repo'];
+            $userId = (int) $authn['user_id'];
+            $body   = (array) ($request->getParsedBody() ?? []);
+            $email  = trim((string) ($body['email'] ?? ''));
+
+            if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                return $json($response, ['ok' => false, 'error' => 'invalid_email'], 400);
+            }
+
+            $repo->updateEmail($userId, $email);
+            $gravatarUrl = 'https://www.gravatar.com/avatar/' . md5(strtolower($email)) . '?s=80&d=identicon';
+            return $json($response, ['ok' => true, 'gravatar_url' => $gravatarUrl]);
         });
 
         // ── Lobby ────────────────────────────────────────────────────────────────

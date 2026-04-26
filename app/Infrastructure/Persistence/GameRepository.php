@@ -206,10 +206,16 @@ class GameRepository
         $stmt->execute(['hash' => $passwordHash, 'id' => $userId]);
     }
 
+    public function updateEmail(int $userId, string $email): void
+    {
+        $stmt = $this->db->pdo()->prepare('UPDATE users SET email = :email WHERE id = :id');
+        $stmt->execute(['email' => $email, 'id' => $userId]);
+    }
+
     /**
      * Compute full stats for a user: wins, partners, opponents, monthly win %.
      */
-    public function statsForUser(int $userId): array
+    public function statsForUser(int $userId, bool $includeAi = false): array
     {
         $pdo = $this->db->pdo();
 
@@ -256,21 +262,24 @@ class GameRepository
         $finCount  = count($finishedGames);
         $winPct    = $finCount > 0 ? round($totalWins / $finCount * 100, 1) : 0.0;
 
-        // 3. Human co-players in finished games
+        // 3. Co-players in finished games (humans always; AI when $includeAi)
+        $aiFilter = $includeAi
+            ? '(gp_co.user_id IS NOT NULL OR gp_co.is_ai = 1)'
+            : '(gp_co.is_ai = 0 AND gp_co.user_id IS NOT NULL)';
         $stmt = $pdo->prepare(
-            'SELECT gp_me.game_id, gp_me.team AS my_team,
-                    gp_co.user_id AS co_uid, gp_co.team AS co_team,
-                    COALESCE(u.nickname, u.username) AS co_username
+            "SELECT gp_me.game_id, gp_me.team AS my_team,
+                    gp_co.user_id AS co_uid, gp_co.team AS co_team, gp_co.is_ai AS co_is_ai,
+                    COALESCE(gp_co.display_name, u.nickname, u.username) AS co_username,
+                    g.updated_at AS game_date
              FROM game_players gp_me
-             JOIN game_players gp_co ON gp_co.game_id  = gp_me.game_id
-                                    AND gp_co.user_id  != :uid
-                                    AND gp_co.is_ai     = 0
-                                    AND gp_co.user_id  IS NOT NULL
-             JOIN users u ON u.id = gp_co.user_id
-             JOIN games g  ON g.id = gp_me.game_id
-                          AND g.status = "finished"
-                          AND g.archived_at IS NULL
-             WHERE gp_me.user_id = :uid AND gp_me.is_ai = 0'
+             JOIN game_players gp_co ON gp_co.game_id = gp_me.game_id
+                                    AND (gp_co.user_id != :uid OR gp_co.user_id IS NULL)
+                                    AND {$aiFilter}
+             LEFT JOIN users u ON u.id = gp_co.user_id
+             JOIN games g ON g.id = gp_me.game_id
+                         AND g.status = 'finished'
+                         AND g.archived_at IS NULL
+             WHERE gp_me.user_id = :uid AND gp_me.is_ai = 0"
         );
         $stmt->execute(['uid' => $userId]);
         $coplayers = $stmt->fetchAll();
@@ -278,46 +287,60 @@ class GameRepository
         $partnerMap  = [];
         $opponentMap = [];
         foreach ($coplayers as $co) {
-            $gid  = (int) $co['game_id'];
-            $coUid = (int) $co['co_uid'];
-            $won  = $wonGame[$gid] ?? false;
+            $gid     = (int) $co['game_id'];
+            $won     = $wonGame[$gid] ?? false;
+            $coIsAi  = (bool) ($co['co_is_ai'] ?? false);
+            $gameDate = (string) ($co['game_date'] ?? '');
+            // Key: numeric user_id for humans, "ai:name" for bots
+            $key = $coIsAi ? ('ai:' . ($co['co_username'] ?? '')) : (int) $co['co_uid'];
+            $uid = $coIsAi ? null : (int) $co['co_uid'];
             if ((int) $co['co_team'] === (int) $co['my_team']) {
-                if (!isset($partnerMap[$coUid])) {
-                    $partnerMap[$coUid] = ['user_id' => $coUid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0];
+                if (!isset($partnerMap[$key])) {
+                    $partnerMap[$key] = ['user_id' => $uid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0, 'last_played' => null];
                 }
-                $partnerMap[$coUid]['games']++;
-                if ($won) { $partnerMap[$coUid]['wins']++; }
+                $partnerMap[$key]['games']++;
+                if ($won) { $partnerMap[$key]['wins']++; }
+                if ($gameDate > ($partnerMap[$key]['last_played'] ?? '')) { $partnerMap[$key]['last_played'] = $gameDate; }
             } else {
-                if (!isset($opponentMap[$coUid])) {
-                    $opponentMap[$coUid] = ['user_id' => $coUid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0];
+                if (!isset($opponentMap[$key])) {
+                    $opponentMap[$key] = ['user_id' => $uid, 'username' => $co['co_username'], 'games' => 0, 'wins' => 0, 'last_played' => null];
                 }
-                $opponentMap[$coUid]['games']++;
-                if ($won) { $opponentMap[$coUid]['wins']++; }
+                $opponentMap[$key]['games']++;
+                if ($won) { $opponentMap[$key]['wins']++; }
+                if ($gameDate > ($opponentMap[$key]['last_played'] ?? '')) { $opponentMap[$key]['last_played'] = $gameDate; }
             }
         }
 
         $makeList = static function (array $map): array {
             $list = array_values($map);
             foreach ($list as &$r) {
-                $r['win_pct'] = $r['games'] > 0 ? round($r['wins'] / $r['games'] * 100, 1) : 0.0;
+                $r['win_pct']     = $r['games'] > 0 ? round($r['wins'] / $r['games'] * 100, 1) : 0.0;
+                $r['last_played'] = $r['last_played'] ? substr($r['last_played'], 0, 10) : null;
             }
             usort($list, static fn($a, $b) => $b['games'] - $a['games']);
             return array_slice($list, 0, 8);
         };
 
-        // 4. Monthly win % (chronological, last 18 months)
+        // 4. Monthly win % (chronological, last 18 months) + yearly rollup
         $monthly = [];
+        $yearly  = [];
         foreach ($finishedGames as $g) {
-            $ym = (string) ($g['ym'] ?? '');
-            if ($ym === '') {
-                continue;
+            $ym   = (string) ($g['ym'] ?? '');
+            $year = substr($ym, 0, 4);
+            $won  = $wonGame[(int) $g['id']] ?? false;
+            if ($ym !== '') {
+                if (!isset($monthly[$ym])) {
+                    $monthly[$ym] = ['month' => $ym, 'games' => 0, 'wins' => 0, 'win_pct' => 0.0];
+                }
+                $monthly[$ym]['games']++;
+                if ($won) { $monthly[$ym]['wins']++; }
             }
-            if (!isset($monthly[$ym])) {
-                $monthly[$ym] = ['month' => $ym, 'games' => 0, 'wins' => 0, 'win_pct' => 0.0];
-            }
-            $monthly[$ym]['games']++;
-            if ($wonGame[(int) $g['id']] ?? false) {
-                $monthly[$ym]['wins']++;
+            if ($year !== '') {
+                if (!isset($yearly[$year])) {
+                    $yearly[$year] = ['year' => $year, 'games' => 0, 'wins' => 0, 'win_pct' => 0.0];
+                }
+                $yearly[$year]['games']++;
+                if ($won) { $yearly[$year]['wins']++; }
             }
         }
         $monthlyList = array_values($monthly);
@@ -326,6 +349,33 @@ class GameRepository
         }
         unset($m);
         $monthlyList = array_slice($monthlyList, -18);
+
+        $yearlyList = array_values($yearly);
+        foreach ($yearlyList as &$y) {
+            $y['win_pct'] = $y['games'] > 0 ? round($y['wins'] / $y['games'] * 100, 1) : 0.0;
+        }
+        unset($y);
+
+        // 5. Bid/set counters (bidding hands only — useful for self view)
+        $bidStmt = $pdo->prepare(
+            'SELECT COUNT(*) AS hands_bid,
+                    SUM(CASE WHEN (gp_bidder.team = 0 AND s.team0_delta > 0)
+                                 OR (gp_bidder.team = 1 AND s.team1_delta > 0)
+                             THEN 1 ELSE 0 END) AS bids_made,
+                    SUM(CASE WHEN (gp_bidder.team = 0 AND s.team0_delta < 0)
+                                 OR (gp_bidder.team = 1 AND s.team1_delta < 0)
+                             THEN 1 ELSE 0 END) AS sets_taken
+             FROM hands h
+             JOIN games g ON g.id = h.game_id AND g.archived_at IS NULL
+             JOIN game_players gp_user ON gp_user.game_id = h.game_id
+                                      AND gp_user.user_id = :uid AND gp_user.is_ai = 0
+             JOIN game_players gp_bidder ON gp_bidder.game_id = h.game_id
+                                        AND gp_bidder.seat = h.bid_winner_seat
+             JOIN scores s ON s.hand_id = h.id AND s.game_id = h.game_id
+             WHERE gp_user.team = gp_bidder.team'
+        );
+        $bidStmt->execute(['uid' => $userId]);
+        $bidCounts = $bidStmt->fetch() ?: [];
 
         return [
             'games_played'   => (int) ($counts['total']          ?? 0),
@@ -336,6 +386,10 @@ class GameRepository
             'partners'       => $makeList($partnerMap),
             'opponents'      => $makeList($opponentMap),
             'monthly'        => $monthlyList,
+            'yearly'         => $yearlyList,
+            'hands_bid'      => (int) ($bidCounts['hands_bid']  ?? 0),
+            'bids_made'      => (int) ($bidCounts['bids_made']  ?? 0),
+            'sets_taken'     => (int) ($bidCounts['sets_taken'] ?? 0),
         ];
     }
 

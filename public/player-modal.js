@@ -13,6 +13,10 @@
 (function () {
   'use strict';
 
+  // ── Bot info ──────────────────────────────────────────────────────────────
+  const BOT_ABOUT = 'This bot bids by counting trump cards in hand, follows suit when required, ' +
+    'and reneges on top trumps when allowed. It plays the same way every game.';
+
   // ── Avatar definitions ────────────────────────────────────────────────────
   const AVATARS = [
     { code: 's-teal',   bg: '#0d6f66', sym: '♠' },
@@ -165,6 +169,15 @@
     .pm-avatar-option.selected { border-color: white; box-shadow: 0 0 0 2px #0d6f66; }
 
     .pm-spinner { text-align: center; padding: 30px; color: #999; }
+
+    /* Bot panel */
+    .pm-bot-label { color: #5c6670; font-size: 12px; min-width: 110px; font-weight: 600; }
+
+    /* Common games line */
+    .pm-common-games {
+      font-size: 13px; color: #3a3028; background: #f0ebe0;
+      border-radius: 8px; padding: 9px 12px; margin-bottom: 14px;
+    }
   `;
 
   let styleInjected = false;
@@ -174,6 +187,11 @@
     const style = document.createElement('style');
     style.textContent = MODAL_CSS;
     document.head.appendChild(style);
+  }
+
+  // ── Escape helper ─────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -195,7 +213,15 @@
   }
 
   // ── DOM setup ─────────────────────────────────────────────────────────────
-  let dialog, box, loadedUserId;
+  let dialog, loadedUserId, _openerEl, _loadedStats, _loadedUser;
+
+  function focusableParts() {
+    const box = document.getElementById('pm-box');
+    if (!box) return [];
+    return [...box.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+      el => !el.disabled && el.offsetParent !== null
+    );
+  }
 
   function ensureDialog() {
     if (dialog) return;
@@ -222,6 +248,21 @@
 
     // Close on backdrop click
     dialog.addEventListener('click', e => { if (e.target === dialog) closePlayerModal(); });
+
+    // Escape key closes; Tab/Shift-Tab trapped inside #pm-box
+    dialog.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); closePlayerModal(); return; }
+      if (e.key === 'Tab') {
+        const parts = focusableParts();
+        if (parts.length === 0) return;
+        const first = parts[0], last = parts[parts.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+          if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+    });
   }
 
   // ── Avatar rendering ──────────────────────────────────────────────────────
@@ -288,19 +329,98 @@
   }
 
   // ── Stats panel ───────────────────────────────────────────────────────────
-  function renderStats(stats) {
+  // Chart toggle state — 'months' or 'years' per open panel
+  let _chartMode = 'months';
+  // Player filter toggle — 'all', 'humans', 'bots'
+  let _playerFilter = 'all';
+
+  function yearbar(yearly) {
+    if (!yearly || yearly.length === 0) {
+      return '<div class="pm-no-data">No game history yet.</div>';
+    }
+    const maxGames = Math.max(...yearly.map(y => y.games), 1);
+    let html = '<div style="display:flex;align-items:flex-end;gap:6px;height:80px;padding:4px 0">';
+    yearly.forEach(y => {
+      const h = Math.round((y.games / maxGames) * 68);
+      html += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+        <span style="font-size:9px;color:#0d6f66">${y.win_pct}%</span>
+        <div style="width:100%;height:${h}px;background:#0d6f66;border-radius:3px 3px 0 0;min-height:3px"
+             title="${y.games} games, ${y.wins} wins"></div>
+        <span style="font-size:9px;color:#888">${y.year}</span>
+      </div>`;
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function renderStats(stats, viewerId, isSelf, profileName) {
     const winPct = stats.win_pct != null ? stats.win_pct + '%' : '—';
 
-    function peopleTable(rows, myPerspective) {
-      if (!rows || rows.length === 0) {
-        return '<div class="pm-no-data">No ' + myPerspective + ' data yet.</div>';
+    // Common games with viewer (human mode only)
+    let commonHtml = '';
+    if (viewerId && !isSelf) {
+      const partner  = stats.partners  && stats.partners.find(p => p.user_id != null && Number(p.user_id) === Number(viewerId));
+      const opponent = stats.opponents && stats.opponents.find(p => p.user_id != null && Number(p.user_id) === Number(viewerId));
+      const pGames   = partner  ? partner.games  : 0;
+      const oGames   = opponent ? opponent.games : 0;
+      const total    = pGames + oGames;
+      if (total > 0) {
+        const wins   = (partner ? partner.wins : 0) + (opponent ? opponent.wins : 0);
+        const losses = total - wins;
+        const pct    = Math.round(wins / total * 100);
+        commonHtml   = `<div class="pm-common-games">You and ${esc(profileName)}: ${total} game${total===1?'':'s'} · ${wins}–${losses} (${pct}%)</div>`;
+      }
+    }
+
+    // KPI row — self gets bid/set counters too
+    let kpiHtml = `
+      <div class="pm-kpi-row" style="grid-template-columns:repeat(${isSelf ? 6 : 3},1fr)">
+        <div class="pm-kpi"><div class="pm-kpi-val">${stats.games_played ?? 0}</div><div class="pm-kpi-lbl">Played</div></div>
+        <div class="pm-kpi"><div class="pm-kpi-val">${stats.wins ?? 0}</div><div class="pm-kpi-lbl">Wins</div></div>
+        <div class="pm-kpi"><div class="pm-kpi-val">${winPct}</div><div class="pm-kpi-lbl">Win Rate</div></div>
+        ${isSelf ? `
+        <div class="pm-kpi"><div class="pm-kpi-val">${stats.hands_bid ?? 0}</div><div class="pm-kpi-lbl">Hands Bid</div></div>
+        <div class="pm-kpi"><div class="pm-kpi-val">${stats.bids_made ?? 0}</div><div class="pm-kpi-lbl">Bids Made</div></div>
+        <div class="pm-kpi"><div class="pm-kpi-val">${stats.sets_taken ?? 0}</div><div class="pm-kpi-lbl">Sets Taken</div></div>
+        ` : ''}
+      </div>`;
+
+    // Chart with month/year toggle (self only)
+    const chartContent = _chartMode === 'years' ? yearbar(stats.yearly) : sparkline(stats.monthly);
+    const chartToggle = isSelf ? `
+      <div style="display:flex;gap:0;margin-bottom:6px">
+        <button onclick="pmChartMode('months')" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:6px 0 0 6px;border:1px solid #c5baa8;cursor:pointer;background:${_chartMode==='months'?'#0d6f66':'#fff'};color:${_chartMode==='months'?'#fff':'#5c6670'}">Months</button>
+        <button onclick="pmChartMode('years')" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:0 6px 6px 0;border:1px solid #c5baa8;border-left:none;cursor:pointer;background:${_chartMode==='years'?'#0d6f66':'#fff'};color:${_chartMode==='years'?'#fff':'#5c6670'}">Years</button>
+      </div>` : '';
+
+    // Player filter toggle (self only)
+    const filterToggle = isSelf ? `
+      <div style="display:flex;gap:0;margin-bottom:8px">
+        <button onclick="pmPlayerFilter('all')" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:6px 0 0 6px;border:1px solid #c5baa8;cursor:pointer;background:${_playerFilter==='all'?'#0d6f66':'#fff'};color:${_playerFilter==='all'?'#fff':'#5c6670'}">All</button>
+        <button onclick="pmPlayerFilter('humans')" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:0;border:1px solid #c5baa8;border-left:none;cursor:pointer;background:${_playerFilter==='humans'?'#0d6f66':'#fff'};color:${_playerFilter==='humans'?'#fff':'#5c6670'}">Humans</button>
+        <button onclick="pmPlayerFilter('bots')" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:0 6px 6px 0;border:1px solid #c5baa8;border-left:none;cursor:pointer;background:${_playerFilter==='bots'?'#0d6f66':'#fff'};color:${_playerFilter==='bots'?'#fff':'#5c6670'}">Bots</button>
+      </div>` : '';
+
+    function filterRows(rows) {
+      if (!isSelf || _playerFilter === 'all') return rows;
+      if (_playerFilter === 'humans') return (rows || []).filter(r => r.user_id != null);
+      if (_playerFilter === 'bots')   return (rows || []).filter(r => r.user_id == null);
+      return rows;
+    }
+
+    function peopleTable(rows, label) {
+      const filtered = filterRows(rows);
+      if (!filtered || filtered.length === 0) {
+        return '<div class="pm-no-data">No ' + label + ' data yet.</div>';
       }
       let html = '<table class="pm-table"><thead><tr><th>Player</th><th>Games</th><th>Win %</th><th></th></tr></thead><tbody>';
-      rows.forEach(r => {
-        const pct = r.win_pct != null ? r.win_pct : 0;
+      filtered.forEach(r => {
+        const pct  = r.win_pct != null ? r.win_pct : 0;
         const barW = Math.round(pct);
+        const name = esc(r.username || (r.user_id ? '#' + r.user_id : '?'));
+        const lastP = r.last_played ? `<div style="font-size:10px;color:#999;margin-top:1px">last ${r.last_played}</div>` : '';
         html += `<tr>
-          <td>${esc(r.username || '#' + r.user_id)}</td>
+          <td>${name}${lastP}</td>
           <td>${r.games}</td>
           <td>${pct}%</td>
           <td><span class="pm-win-bar" style="width:${barW}px"></span></td>
@@ -311,14 +431,12 @@
     }
 
     return `
-      <div class="pm-kpi-row">
-        <div class="pm-kpi"><div class="pm-kpi-val">${stats.games_played ?? 0}</div><div class="pm-kpi-lbl">Played</div></div>
-        <div class="pm-kpi"><div class="pm-kpi-val">${stats.wins ?? 0}</div><div class="pm-kpi-lbl">Wins</div></div>
-        <div class="pm-kpi"><div class="pm-kpi-val">${winPct}</div><div class="pm-kpi-lbl">Win Rate</div></div>
-      </div>
+      ${commonHtml}
+      ${kpiHtml}
       <div class="pm-section-title">Win % Over Time</div>
-      <div class="pm-chart">${sparkline(stats.monthly)}</div>
-      <div class="pm-section-title">Common Partners</div>
+      ${chartToggle}
+      <div class="pm-chart" id="pm-chart-area">${chartContent}</div>
+      <div class="pm-section-title" style="margin-top:14px">${filterToggle}Common Partners</div>
       ${peopleTable(stats.partners, 'partner')}
       <div class="pm-section-title">Common Opponents</div>
       ${peopleTable(stats.opponents, 'opponent')}
@@ -335,6 +453,21 @@
     avatarGrid += '</div>';
 
     return `
+      <div class="pm-section-title">Email / Gravatar</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px">
+        <div id="pm-grav-preview" style="width:52px;height:52px;border-radius:50%;overflow:hidden;flex-shrink:0;background:#ddd">
+          ${user.gravatar_url ? `<img src="${esc(user.gravatar_url)}" style="width:100%;height:100%;object-fit:cover" alt="">` : ''}
+        </div>
+        <div style="flex:1">
+          <label style="font-size:11px;color:#5c6670;display:block;margin-bottom:4px">Set your email to use your Gravatar as avatar.</label>
+          <input class="pm-input" type="email" id="pm-email" maxlength="200" placeholder="you@example.com" value="${esc(user.email || '')}">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:20px">
+        <button class="pm-btn" onclick="pmSaveEmail()">Save Email</button>
+        <span class="pm-msg" id="pm-email-msg"></span>
+      </div>
+
       <div class="pm-section-title">Display Name</div>
       <div class="pm-form-group">
         <label style="font-size:11px;color:#5c6670;display:block;margin-bottom:4px">Shown on boards and in games. Defaults to username.</label>
@@ -368,6 +501,47 @@
     `;
   }
 
+  // ── AI panel ──────────────────────────────────────────────────────────────
+  const AI_COLORS = ['#0d6f66','#c26a10','#6b21a8','#1e3a5f','#9f1239'];
+
+  function renderAiPanel() {
+    return `
+      <table class="pm-table" style="margin-top:4px"><tbody>
+        <tr><td class="pm-bot-label">Strategy</td><td>Algorithmic</td></tr>
+        <tr><td class="pm-bot-label">Difficulty</td><td>Medium</td></tr>
+        <tr>
+          <td class="pm-bot-label" style="vertical-align:top;padding-top:8px">About</td>
+          <td style="font-size:12px;line-height:1.6;color:#3a3028;padding:8px 8px 8px 8px">${esc(BOT_ABOUT)}</td>
+        </tr>
+        <tr><td class="pm-bot-label">Personality</td><td style="color:#aaa">—</td></tr>
+        <tr><td class="pm-bot-label">Wins</td><td style="color:#aaa">—</td></tr>
+      </tbody></table>
+    `;
+  }
+
+  function showAiInfo(descriptor) {
+    const name   = descriptor.display_name || 'Bot';
+    const seat   = descriptor.seat != null ? (Number(descriptor.seat) + 1) : '?';
+    const color  = AI_COLORS[name.charCodeAt(0) % AI_COLORS.length];
+
+    const avEl = document.getElementById('pm-av');
+    avEl.innerHTML = '';
+    avEl.style.background = color;
+    avEl.textContent = name.charAt(0).toUpperCase();
+
+    document.getElementById('pm-username').textContent = name;
+    document.getElementById('pm-subtitle').textContent = 'Computer player · Seat ' + seat;
+
+    const tabBar = document.getElementById('pm-tabs');
+    tabBar.innerHTML = '<button class="pm-tab active" data-tab="bot" onclick="pmSwitchTab(\'bot\')">Bot</button>';
+
+    document.getElementById('pm-body').innerHTML =
+      '<div class="pm-panel active" id="pm-panel-bot">' + renderAiPanel() + '</div>';
+
+    const closeBtn = document.getElementById('pm-close');
+    if (closeBtn) closeBtn.focus();
+  }
+
   // ── Tab switching ─────────────────────────────────────────────────────────
   function activateTab(tabId) {
     document.querySelectorAll('.pm-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
@@ -377,6 +551,8 @@
   // ── Load & render ─────────────────────────────────────────────────────────
   async function loadProfile(userId) {
     loadedUserId = userId;
+    _loadedStats = null; _loadedUser = null;
+    _chartMode = 'months'; _playerFilter = 'all';
     const body = document.getElementById('pm-body');
     body.innerHTML = '<div class="pm-spinner">Loading…</div>';
     document.getElementById('pm-tabs').innerHTML = '';
@@ -385,9 +561,11 @@
     document.getElementById('pm-av').textContent = '';
     document.getElementById('pm-av').style.background = '#bbb';
 
+    const isSelfFetch = myUserId() && Number(myUserId()) === Number(userId);
+    const statsUrl = '/api/player/stats?user_id=' + encodeURIComponent(userId) + (isSelfFetch ? '&include_ai=1' : '');
     let data;
     try {
-      data = await apiFetch('/api/player/stats?user_id=' + encodeURIComponent(userId));
+      data = await apiFetch(statsUrl);
     } catch (err) {
       body.innerHTML = '<div class="pm-no-data">Could not load profile: ' + esc(err.message) + '</div>';
       return;
@@ -395,6 +573,7 @@
 
     const user  = data.user;
     const stats = data.stats;
+    _loadedStats = stats; _loadedUser = user;
     const isSelf = myUserId() && Number(myUserId()) === Number(user.id);
 
     // Header
@@ -431,7 +610,7 @@
 
     // Panels
     body.innerHTML = `
-      <div class="pm-panel" id="pm-panel-stats">${renderStats(stats)}</div>
+      <div class="pm-panel" id="pm-panel-stats">${renderStats(stats, myUserId(), isSelf, user.display_name || user.username)}</div>
       ${isSelf ? `<div class="pm-panel" id="pm-panel-account">${renderAccount(user)}</div>` : ''}
     `;
 
@@ -444,10 +623,37 @@
         el.classList.add('selected');
       });
     });
+
+    // Move focus to the close button once content is loaded
+    const closeBtn = document.getElementById('pm-close');
+    if (closeBtn) closeBtn.focus();
   }
 
   // ── Public action handlers ────────────────────────────────────────────────
   window.pmSwitchTab = function (tabId) { activateTab(tabId); };
+
+  window.pmChartMode = function (mode) {
+    _chartMode = mode;
+    const area = document.getElementById('pm-chart-area');
+    if (!area || !_loadedStats) return;
+    area.innerHTML = mode === 'years' ? yearbar(_loadedStats.yearly) : sparkline(_loadedStats.monthly);
+    // Re-render the toggle buttons to reflect new selection
+    pmReloadStats();
+  };
+
+  window.pmPlayerFilter = function (filter) {
+    _playerFilter = filter;
+    pmReloadStats();
+  };
+
+  function pmReloadStats() {
+    if (!_loadedStats || !_loadedUser) return;
+    const panel = document.getElementById('pm-panel-stats');
+    if (panel) {
+      const isSelf = myUserId() && Number(myUserId()) === Number(_loadedUser.id);
+      panel.innerHTML = renderStats(_loadedStats, myUserId(), isSelf, _loadedUser.display_name || _loadedUser.username);
+    }
+  }
 
   window.pmSaveNickname = async function () {
     const input = document.getElementById('pm-nick');
@@ -497,23 +703,53 @@
     } catch (err) { msg.textContent = err.message; msg.className = 'pm-msg err'; }
   };
 
-  // ── Escape helper ─────────────────────────────────────────────────────────
-  function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
+  window.pmSaveEmail = async function () {
+    const input = document.getElementById('pm-email');
+    const msg   = document.getElementById('pm-email-msg');
+    try {
+      const res = await apiFetch('/api/player/update_email', 'POST', { email: input.value.trim() });
+      msg.textContent = 'Saved!'; msg.className = 'pm-msg ok';
+      // Update gravatar preview
+      const preview = document.getElementById('pm-grav-preview');
+      if (preview && res.gravatar_url) {
+        preview.innerHTML = `<img src="${esc(res.gravatar_url)}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+        // Also update header avatar if currently showing gravatar
+        const avEl = document.getElementById('pm-av');
+        if (avEl && !avEl.textContent.trim() && _loadedUser && !_loadedUser.avatar_code) {
+          avEl.innerHTML = '';
+          avEl.style.background = '#ddd';
+          const img = document.createElement('img');
+          img.src = res.gravatar_url;
+          img.alt = '';
+          img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;';
+          avEl.appendChild(img);
+        }
+      }
+    } catch (err) { msg.textContent = err.message; msg.className = 'pm-msg err'; }
+  };
 
   // ── Public API ────────────────────────────────────────────────────────────
-  window.openPlayerModal = function (userId) {
-    if (!userId) return;
+
+  // openPlayerModal(123)                        — open for user id 123
+  // openPlayerModal({kind:'user', userId:123})  — same
+  // openPlayerModal({kind:'ai', display_name, seat}) — AI info panel
+  window.openPlayerModal = function (arg) {
+    if (!arg) return;
+    _openerEl = document.activeElement || null;
     ensureDialog();
     dialog.removeAttribute('hidden');
     document.body.style.overflow = 'hidden';
-    loadProfile(Number(userId));
+    if (arg && typeof arg === 'object') {
+      if (arg.kind === 'ai') { showAiInfo(arg); return; }
+      if (arg.kind === 'user' && arg.userId) { loadProfile(Number(arg.userId)); return; }
+    }
+    loadProfile(Number(arg));
   };
 
   window.closePlayerModal = function () {
     if (dialog) dialog.setAttribute('hidden', '');
     document.body.style.overflow = '';
+    if (_openerEl) { try { _openerEl.focus(); } catch(_) {} _openerEl = null; }
   };
 
   /**
