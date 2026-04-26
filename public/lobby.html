@@ -1793,8 +1793,11 @@
           const dropdown = document.createElement('div');
           dropdown.className = 'invite-dropdown';
 
-          input.addEventListener('focus', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = ''; });
-          input.addEventListener('input', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = ''; });
+          // The default CSS for .invite-dropdown is `display: none`, so
+          // clearing the inline style ('') falls through to hidden. We
+          // need an explicit non-none value to actually reveal it.
+          input.addEventListener('focus', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = 'block'; });
+          input.addEventListener('input', () => { renderInviteDropdown(seat, input.value, dropdown); dropdown.style.display = 'block'; });
           input.addEventListener('blur',  () => { setTimeout(() => { dropdown.style.display = 'none'; }, 150); });
 
           picker.appendChild(input);
@@ -1815,6 +1818,13 @@
     function setSeatType(seat, type) {
       seatState.seats[seat] = { type, userId: null, displayName: null };
       rerenderSeatRow(seat);
+      // For Invite, send the cursor straight into the search box so the
+      // user can start typing a name without an extra click.
+      if (type === 'invite') {
+        const grid = byId('seatsGrid');
+        const input = grid.querySelector(`.seat-row[data-seat="${seat}"] .invite-search`);
+        if (input) input.focus();
+      }
     }
 
     function renderInviteDropdown(seat, query, dropdown) {
