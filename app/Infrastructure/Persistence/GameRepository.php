@@ -400,9 +400,17 @@ class GameRepository
 
     public function listGamesForUser(int $userId, int $limit = 200): array
     {
-        $sql = 'SELECT g.id, g.status, g.target_score, g.ruleset, g.dealer_seat, g.current_phase, g.current_turn_seat, g.hand_number, g.created_by_user_id, g.created_at, g.updated_at
+        // Latest score row per game so the lobby can show "75 vs 60 · 120".
+        $sql = 'SELECT g.id, g.status, g.target_score, g.ruleset, g.dealer_seat,
+                       g.current_phase, g.current_turn_seat, g.hand_number,
+                       g.created_by_user_id, g.created_at, g.updated_at,
+                       COALESCE(s.team0_total, 0) AS team0_total,
+                       COALESCE(s.team1_total, 0) AS team1_total
                 FROM games g
                 INNER JOIN game_players gp ON gp.game_id = g.id
+                LEFT JOIN scores s
+                       ON s.game_id = g.id
+                      AND s.hand_id = (SELECT MAX(hand_id) FROM scores WHERE game_id = g.id)
                 WHERE gp.user_id = :user_id
                   AND g.archived_at IS NULL
                 ORDER BY g.id DESC
@@ -426,7 +434,9 @@ class GameRepository
         }
         $placeholders = implode(',', array_fill(0, count($gameIds), '?'));
         $sql = "SELECT gp.game_id, gp.seat, gp.user_id, gp.is_ai, gp.team,
-                       u.username, COALESCE(u.nickname, u.username) AS display_name, u.avatar_code
+                       u.username,
+                       COALESCE(gp.display_name, u.nickname, u.username) AS display_name,
+                       u.avatar_code
                 FROM game_players gp
                 LEFT JOIN users u ON u.id = gp.user_id
                 WHERE gp.game_id IN ({$placeholders})
@@ -445,18 +455,19 @@ class GameRepository
         return (bool) $stmt->fetchColumn();
     }
 
-    public function addPlayerSeat(int $gameId, int $seat, ?int $userId, bool $isAi, bool $connected = true): void
+    public function addPlayerSeat(int $gameId, int $seat, ?int $userId, bool $isAi, bool $connected = true, ?string $displayName = null): void
     {
-        $sql = 'INSERT INTO game_players (game_id, seat, user_id, is_ai, team, connected)
-                VALUES (:game_id, :seat, :user_id, :is_ai, :team, :connected)';
+        $sql = 'INSERT INTO game_players (game_id, seat, user_id, is_ai, team, connected, display_name)
+                VALUES (:game_id, :seat, :user_id, :is_ai, :team, :connected, :display_name)';
         $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute([
-            'game_id' => $gameId,
-            'seat' => $seat,
-            'user_id' => $userId,
-            'is_ai' => $isAi ? 1 : 0,
-            'team' => $seat % 2,
-            'connected' => $connected ? 1 : 0,
+            'game_id'      => $gameId,
+            'seat'         => $seat,
+            'user_id'      => $userId,
+            'is_ai'        => $isAi ? 1 : 0,
+            'team'         => $seat % 2,
+            'connected'    => $connected ? 1 : 0,
+            'display_name' => $displayName,
         ]);
     }
 
@@ -583,7 +594,9 @@ class GameRepository
     public function listPlayers(int $gameId): array
     {
         $sql = 'SELECT gp.seat, gp.user_id, gp.is_ai, gp.team, gp.connected,
-                       u.username, COALESCE(u.nickname, u.username) AS display_name, u.avatar_code
+                       u.username,
+                       COALESCE(gp.display_name, u.nickname, u.username) AS display_name,
+                       u.avatar_code
                 FROM game_players gp
                 LEFT JOIN users u ON u.id = gp.user_id
                 WHERE gp.game_id = :game_id

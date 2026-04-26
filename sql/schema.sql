@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS game_players (
   is_ai TINYINT(1) NOT NULL DEFAULT 0,
   team TINYINT UNSIGNED NOT NULL,
   connected TINYINT(1) NOT NULL DEFAULT 1,
+  display_name VARCHAR(60) NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_game_seat UNIQUE (game_id, seat),
   CONSTRAINT fk_game_players_game FOREIGN KEY (game_id) REFERENCES games(id),

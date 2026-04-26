@@ -814,13 +814,20 @@ final class Routes
                 return $json($response, ['ok' => false, 'error' => 'creator cannot also be invited'], 400);
             }
 
+            // Pool of family names used to identify AI players at the table.
+            // Shuffled once per game so each bot has a distinct, recognizable name.
+            $aiNamePool = ['George', 'Herve', 'Cora', 'Lucienne', 'Alice', 'Gene', 'Jules', 'Roland'];
+            shuffle($aiNamePool);
+            $aiNameCursor = 0;
+
             try {
-                $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode, $playerCount): int {
+                $gameId = $repo->withTransaction(function () use ($repo, $targetScore, $ruleset, $userId, $aiMap, $inviteBySeat, $inviteMode, $playerCount, $aiNamePool, &$aiNameCursor): int {
                     $gameId = $repo->createGame($targetScore, $ruleset, $userId, $playerCount);
                     for ($seat = 0; $seat < $playerCount; $seat++) {
                         $isAi = $aiMap[$seat];
                         $seatUserId = null;
                         $connected = false;
+                        $displayName = null;
                         if ($seat === 0 && !$isAi) {
                             $seatUserId = $userId;
                             $connected = $userId !== null;
@@ -833,9 +840,11 @@ final class Routes
 
                         if ($isAi) {
                             $connected = true;
+                            $displayName = $aiNamePool[$aiNameCursor % count($aiNamePool)];
+                            $aiNameCursor++;
                         }
 
-                        $repo->addPlayerSeat($gameId, $seat, $seatUserId, $isAi, $connected);
+                        $repo->addPlayerSeat($gameId, $seat, $seatUserId, $isAi, $connected, $displayName);
                     }
                     $repo->appendEvent($gameId, 'game_created', 0, [
                         'target_score' => $targetScore,

@@ -68,7 +68,19 @@ final class GameRepositoryArchiveTest extends TestCase
                 user_id INTEGER NULL,
                 is_ai INTEGER NOT NULL DEFAULT 0,
                 team INTEGER NOT NULL DEFAULT 0,
-                connected INTEGER NOT NULL DEFAULT 1
+                connected INTEGER NOT NULL DEFAULT 1,
+                display_name TEXT NULL
+            )
+        ');
+
+        $this->pdo->exec('
+            CREATE TABLE scores (
+                game_id INTEGER NOT NULL,
+                hand_id INTEGER NOT NULL,
+                team0_total INTEGER NOT NULL DEFAULT 0,
+                team1_total INTEGER NOT NULL DEFAULT 0,
+                team0_sets INTEGER NOT NULL DEFAULT 0,
+                team1_sets INTEGER NOT NULL DEFAULT 0
             )
         ');
 
