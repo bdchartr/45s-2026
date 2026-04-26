@@ -88,7 +88,7 @@ Last updated: 2026-04-20 (social auth update)
 - Card counts on non-viewer zones reflect actual cards remaining (derived from events)
 - Fly animation when viewer plays a card (750ms arc from hand to center)
 - Directional trick card animations (cards slide in from each player's direction)
-- Trick collection animation (cards sweep to winner's stack)
+- Trick collection animation (cards sweep into the winner's player zone, where the per-hand "Tricks N" pill increments)
 - Kitty shown face-down during bidding; merged into bid winner's hand after trump declared
 - Clickable player names open profile modal
 
