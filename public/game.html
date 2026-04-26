@@ -62,7 +62,7 @@
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr;
-      gap: 14px;
+      gap: 10px;
     }
 
     /* ── Panels ── */
@@ -74,7 +74,7 @@
     }
 
     .topbar {
-      padding: 14px 24px;
+      padding: 10px 24px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 12px;
@@ -162,7 +162,7 @@
       position: relative;
       background:
         radial-gradient(ellipse at 50% 50%, var(--felt-mid) 0%, var(--felt) 55%, var(--felt-dark) 100%);
-      min-height: clamp(520px, 64vh, 760px);
+      min-height: clamp(420px, 54vh, 680px);
       border-radius: 200px;
       border: 5px solid var(--wood2);
       overflow: hidden;
@@ -170,7 +170,7 @@
         inset 0 0 0 8px rgba(0,0,0,0.2),
         inset 0 0 0 10px rgba(255,255,255,0.04),
         0 20px 60px rgba(0,0,0,0.55);
-      margin: 16px;
+      margin: 0 16px;
     }
 
     .felt-pattern {
@@ -537,7 +537,12 @@
       margin-left: -14px;
     }
 
-    /* South zone: pulled out of the board, full-width strip */
+    /* South zone: full-width tray that overlaps the bottom of the felt so
+       the viewer's cards visually sit on the table without the user having
+       to scroll past it. column-reverse puts the hand at the top of the
+       zone (so it lands on the felt) and the name/meta/pill underneath.
+       The negative margin matches the zone-south card height so the cards
+       precisely overlap the bottom edge of the felt. */
     .zone-south {
       position: relative;
       left: auto;
@@ -545,10 +550,19 @@
       transform: none;
       width: 100%;
       max-width: 100%;
-      padding: 14px 20px 18px;
-      box-shadow: 0 -2px 12px rgba(0,0,0,0.18);
-      border-top: 2px solid var(--line);
+      padding: 8px 20px 12px;
+      margin-top: -132px;
+      z-index: 4;
+      box-shadow: none;
+      border-top: 0;
+      background: transparent;
+      display: flex;
+      flex-direction: column-reverse;
+      align-items: stretch;
+      gap: 4px;
     }
+    .zone-south .player-name { color: var(--ink); text-align: center; }
+    .zone-south .player-meta { text-align: center; }
     .zone-south .hand {
       justify-content: center;
       gap: 6px;
@@ -1042,8 +1056,10 @@
       .zone-east .hand .card-chip + .card-chip {
         margin-left: -18px;
       }
-      /* South zone stays full-width, cards scale down but remain prominent */
-      .zone-south { padding: 10px 12px 14px; }
+      /* South zone stays full-width, cards scale down but remain prominent.
+         Match the negative margin to the smaller card height so the
+         overlap stays a clean "cards on the felt" effect. */
+      .zone-south { padding: 6px 12px 10px; margin-top: -86px; }
       .zone-south .card-chip { width: 60px; height: 86px; border-radius: 5px; }
       .zone-south .card-chip .c-rank { top: 5px; left: 6px; font-size: 14px; }
       .zone-south .card-chip .c-suit { font-size: 34px; }
@@ -1065,6 +1081,7 @@
         max-width: 28vw;
         padding: 5px 5px 8px;
       }
+      .zone-south { margin-top: -74px; }
       .zone-south .card-chip { width: 52px; height: 74px; }
       .zone-south .card-chip .c-rank { font-size: 12px; top: 4px; left: 5px; }
       .zone-south .card-chip .c-suit { font-size: 28px; }
