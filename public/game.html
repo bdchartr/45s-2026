@@ -1990,7 +1990,11 @@
       const res = await fetch(app.basePath + path, opts);
       const data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
-        const msg = data && data.error ? data.error : ('http_' + res.status);
+        // Action endpoints return { ok:false, code, message }; auth/system
+        // endpoints use { ok:false, error }. Prefer the human-readable
+        // message, fall back to code, then the legacy error field.
+        const msg = (data && (data.message || data.code || data.error))
+                    || ('http_' + res.status);
         throw new Error(msg);
       }
       return data;
@@ -2878,9 +2882,14 @@
       }
     }
 
+    // Animates a card from the player's hand onto the table.
+    // Returns { el, settled } where `el` is the live DOM node (so the caller
+    // can clean it up if the play is rejected even before the animation
+    // settles) and `settled` is a Promise that resolves to the same node
+    // once the arc finishes.
     function flyCardToCenter(code, trump, fromRect, side) {
       const center = byId('center');
-      if (!center || !fromRect) return Promise.resolve();
+      if (!center || !fromRect) return { el: null, settled: Promise.resolve(null) };
 
       const centerRect = center.getBoundingClientRect();
       const metrics = getTableCardMetrics();
@@ -2939,9 +2948,10 @@
       }
 
       // Resolve with the fly element; caller removes it after renderBoard runs
-      return new Promise(function (resolve) {
+      const settled = new Promise(function (resolve) {
         setTimeout(function () { resolve(fly); }, 450);
       });
+      return { el: fly, settled: settled };
     }
 
     async function playCard(code) {
@@ -2952,29 +2962,33 @@
       }
       if (!code) return;
       app.actionInProgress = true;
-      let flyEl = null;
+
+      // Capture hand chip position before removing it
+      const chipEl = document.querySelector('[data-card="' + code + '"]');
+      const fromRect = chipEl ? chipEl.getBoundingClientRect() : null;
+      const trump    = app.hand ? app.hand.trump_suit : null;
+
+      // Remove card from local hand immediately for instant feedback
+      app.viewerHand = app.viewerHand.filter(function (c) { return c !== code; });
+      renderPlayerZone('south');
+
+      status('Playing ' + cardLabel(code) + '…', '');
+
+      // Start the fly animation. We grab the live DOM node synchronously so
+      // we can always remove it on failure — even if the API rejects before
+      // the 450ms arc lands.
+      const fly = flyCardToCenter(code, trump, fromRect, 'south');
+      const flyEl = fly.el;
+
       try {
-        // Capture hand chip position before removing it
-        const chipEl = document.querySelector('[data-card="' + code + '"]');
-        const fromRect = chipEl ? chipEl.getBoundingClientRect() : null;
-        const trump    = app.hand ? app.hand.trump_suit : null;
-
-        // Remove card from local hand immediately for instant feedback
-        app.viewerHand = app.viewerHand.filter(function (c) { return c !== code; });
-        renderPlayerZone('south');
-
-        status('Playing ' + cardLabel(code) + '…', '');
-
-        // Fly animation + API call run in parallel; flyEl stays in DOM after landing
-        const results = await Promise.all([
-          flyCardToCenter(code, trump, fromRect, 'south'),
+        await Promise.all([
+          fly.settled,
           api('/api/game/play_card', 'POST', {
             game_id: app.gameId,
             seat: app.viewerSeat,
             card: code,
           }, true),
         ]);
-        flyEl = results[0];
 
         // Refresh renders the real table card underneath the still-visible fly card
         await refreshAll();
@@ -2988,14 +3002,15 @@
 
         status('Played ' + cardLabel(code), 'success');
       } catch (err) {
-        // Remove fly card immediately on failure
+        // Failure path: the rejected card must NOT linger on the felt.
+        // Remove the fly element regardless of whether its arc finished.
         if (flyEl && flyEl.parentNode) flyEl.parentNode.removeChild(flyEl);
-        // Restore card on failure
+        // Restore card to the hand
         if (!app.viewerHand.includes(code)) {
           app.viewerHand.push(code);
           renderPlayerZone('south');
         }
-        status('Play failed: ' + err.message, 'error');
+        status(err.message || 'Play failed.', 'error');
       } finally {
         app.actionInProgress = false;
       }
