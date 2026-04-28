@@ -1211,15 +1211,37 @@ final class Routes
 
                 $scores = $repo->getRunningScores($gameId);
 
+                // Add bid sub-phase info for the frontend bidding UI
+                $bidSubPhase  = null;
+                $currentHighBid  = null;
+                $currentHighSeat = null;
+                $inRejectLoop = false;
+                if (($state['current_phase'] ?? null) === 'bidding') {
+                    $bidSummary      = $repo->bidSummary($gameId);
+                    $inRejectLoop    = (bool) ($bidSummary['in_reject_loop'] ?? false);
+                    $currentHighBid  = $bidSummary['highest_bid'] > 0 ? $bidSummary['highest_bid'] : null;
+                    $currentHighSeat = $bidSummary['highest_seat'];
+                    $dealerSeat      = (int) ($state['dealer_seat'] ?? 0);
+                    if ($inRejectLoop) {
+                        $bidSubPhase = ($state['current_turn_seat'] === $dealerSeat) ? 'reject_dealer' : 'reject_bidder';
+                    } else {
+                        $bidSubPhase = 'normal';
+                    }
+                }
+
                 return $json($response, [
-                    'ok'          => true,
-                    'game'        => $state,
-                    'players'     => $players,
-                    'events'      => $events,
-                    'viewer_seat' => $viewerSeat,
-                    'viewer_hand' => $viewerHand,
-                    'hand'        => $handInfo,
-                    'scores'      => $scores,
+                    'ok'               => true,
+                    'game'             => $state,
+                    'players'          => $players,
+                    'events'           => $events,
+                    'viewer_seat'      => $viewerSeat,
+                    'viewer_hand'      => $viewerHand,
+                    'hand'             => $handInfo,
+                    'scores'           => $scores,
+                    'bid_sub_phase'    => $bidSubPhase,
+                    'in_reject_loop'   => $inRejectLoop,
+                    'current_high_bid' => $currentHighBid,
+                    'current_high_seat' => $currentHighSeat,
                 ]);
             } catch (\Throwable $ex) {
                 error_log('[/api/game/get_state] ' . $ex);

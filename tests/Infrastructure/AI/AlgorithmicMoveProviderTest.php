@@ -67,16 +67,28 @@ final class AlgorithmicMoveProviderTest extends TestCase
         $this->assertSame('pass', $resp->payload['bid']);
     }
 
-    public function testDealerStealsWhenComputedBidMatchesCurrentHigh(): void
+    public function testDealerConcedesWhenHandNotStrongEnoughToReject(): void
     {
-        // Dealer: 3 Spades → 15, current highest is 15 — dealer may match to steal.
+        // Dealer: 3 Spades → maxCount=3 (<4), so dealer concedes rather than rejects.
         $resp = $this->ai->choose(new AIRequest(1, 3, 'bidding', [
             'hand_cards'  => ['2S', '3S', '4S', '2H', '3H'],
             'highest_bid' => 15,
             'dealer_seat' => 3,
         ], []));
 
-        $this->assertSame(15, $resp->payload['bid']);
+        $this->assertSame('pass', $resp->payload['bid']);
+    }
+
+    public function testDealerRejectsWhenHandIsStrong(): void
+    {
+        // Dealer: 4 Spades → maxCount=4 (≥4), so dealer rejects the standing bid.
+        $resp = $this->ai->choose(new AIRequest(1, 3, 'bidding', [
+            'hand_cards'  => ['2S', '3S', '4S', '5S', '2H'],
+            'highest_bid' => 15,
+            'dealer_seat' => 3,
+        ], []));
+
+        $this->assertSame('reject', $resp->payload['bid']);
     }
 
     public function testDealerPassesWhenComputedBidBelowCurrentHigh(): void

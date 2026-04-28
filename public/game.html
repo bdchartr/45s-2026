@@ -349,8 +349,10 @@
       font-size: 15px;
       border-radius: 0;
     }
-    .boa-btns .pass-btn { background: var(--wood); box-shadow: 0 3px 0 var(--wood2); }
+    .boa-btns .pass-btn    { background: var(--wood); box-shadow: 0 3px 0 var(--wood2); }
     .boa-btns .pass-btn:hover:not(:disabled) { background: var(--wood2); }
+    .boa-btns .reject-btn  { background: #7a2020; color: #f8e8e8; box-shadow: 0 3px 0 #5a1010; }
+    .boa-btns .reject-btn:hover:not(:disabled) { background: #8e2626; }
 
     /* Compact, read-only preview of viewer hand inside bid/discard overlays
        so the player doesn't have to scroll to see their cards. */
@@ -1205,6 +1207,10 @@
       lastAnimatedTrickKey: null,
       maxEventSeq: 0,
       lastDealSeq: 0,
+      bidSubPhase: null,
+      inRejectLoop: false,
+      currentHighBid: null,
+      currentHighSeat: null,
     };
 
     const SUIT_SYM  = { C: '♣', D: '♦', H: '♥', S: '♠' };
@@ -1687,7 +1693,9 @@
         case 'hand_started':   return 'Hand started';
         case 'game_created':   return 'Game created';
         case 'bid_action':
-          return p.bid === 'pass' ? actor + ' passed' : actor + ' bid ' + p.bid;
+          if (p.bid === 'pass')   return actor + ' passed';
+          if (p.bid === 'reject') return actor + ' rejected the bid';
+          return actor + ' bid ' + p.bid;
         case 'forced_dealer_bid':
           return actor === 'You' ? 'You were forced to bid 15' : actor + ' was forced to bid 15';
         case 'bidding_closed': {
@@ -1776,29 +1784,83 @@
 
       if (phase === 'bidding' && myTurn) {
         show = true;
-        const high = currentHighBid();
+        const high     = app.currentHighBid || 0;
         const isDealer = Number(g.dealer_seat) === Number(app.viewerSeat);
-        const hintText = high > 0
-          ? (isDealer
-              ? 'Highest bid is ' + high + '. Match it to take the bid, or bid higher.'
-              : 'Highest bid is ' + high + '. Bid higher to take it, or pass.')
-          : 'Open the bidding';
-        const card = mk('div', 'boa-card');
-        card.appendChild(mk('div', 'boa-title', 'Your Bid'));
-        card.appendChild(mk('div', 'boa-hint', hintText));
-        const btns = mk('div', 'boa-btns');
-        const passBtn = mk('button', 'pass-btn', 'Pass');
-        passBtn.onclick = function() { submitBid('pass'); };
-        btns.appendChild(passBtn);
-        BID_LADDER.forEach(function(b) {
-          var tooLow = high > 0 && (isDealer ? b < high : b <= high);
-          var label = b === 60 ? '30-for-60' : String(b);
-          var btn = mk('button', null, label);
-          if (b === 60) btn.title = 'Bid 30 to win 60: a special bid worth double points if you make it, double the loss if you miss it.';
-          if (tooLow) btn.disabled = true;
-          btn.onclick = (function(bid) { return function() { submitBid(bid); }; })(b);
-          btns.appendChild(btn);
-        });
+        const inLoop   = app.inRejectLoop;
+        const highName = app.currentHighSeat != null ? seatDisplayName(app.currentHighSeat) : null;
+        const card     = mk('div', 'boa-card');
+        const btns     = mk('div', 'boa-btns');
+
+        if (inLoop && isDealer) {
+          // Dealer in reject loop: concede or reject again
+          card.appendChild(mk('div', 'boa-title', 'Reject Loop'));
+          card.appendChild(mk('div', 'boa-hint',
+            (highName ? highName + ' bid ' : 'Current bid is ') + high + '. Concede ("What is it?") or reject again.'));
+          const concedeBtn = mk('button', 'pass-btn', 'What is it?');
+          concedeBtn.title = 'Concede — let the bidder name trump';
+          concedeBtn.onclick = function() { submitBid('pass'); };
+          btns.appendChild(concedeBtn);
+          const rejectBtn = mk('button', 'reject-btn', 'No ' + high + '!');
+          rejectBtn.onclick = function() { submitBid('reject'); };
+          btns.appendChild(rejectBtn);
+
+        } else if (inLoop && !isDealer) {
+          // Bidder in reject loop: concede or raise
+          card.appendChild(mk('div', 'boa-title', 'Reject Loop'));
+          card.appendChild(mk('div', 'boa-hint',
+            'Dealer rejected your bid of ' + high + '. Concede ("What is it?") or raise.'));
+          const concedeBtn = mk('button', 'pass-btn', 'What is it?');
+          concedeBtn.title = 'Concede — let the dealer name trump';
+          concedeBtn.onclick = function() { submitBid('pass'); };
+          btns.appendChild(concedeBtn);
+          BID_LADDER.forEach(function(b) {
+            if (b <= high) return;  // must raise above current high
+            var label = b === 60 ? '30-for-60' : String(b);
+            var btn = mk('button', null, label);
+            if (b === 60) btn.title = '30-for-60 ends the reject loop immediately.';
+            btn.onclick = (function(bid) { return function() { submitBid(bid); }; })(b);
+            btns.appendChild(btn);
+          });
+
+        } else if (isDealer && high > 0) {
+          // Dealer's final turn in normal bidding: accept or reject
+          card.appendChild(mk('div', 'boa-title', 'Your Bid'));
+          card.appendChild(mk('div', 'boa-hint',
+            (highName ? highName + ' bid ' : 'Highest bid is ') + high + '. Concede ("What is it?") or reject it.'));
+          const concedeBtn = mk('button', 'pass-btn', 'What is it?');
+          concedeBtn.title = 'Concede — let the high bidder name trump';
+          concedeBtn.onclick = function() { submitBid('pass'); };
+          btns.appendChild(concedeBtn);
+          if (high < 60) {
+            const rejectBtn = mk('button', 'reject-btn', 'No ' + high + '!');
+            rejectBtn.title = 'Reject the current bid — start a back-and-forth with the high bidder';
+            rejectBtn.onclick = function() { submitBid('reject'); };
+            btns.appendChild(rejectBtn);
+          }
+
+        } else {
+          // Non-dealer bidding turn (or dealer with no standing bid — forced 15)
+          const hintText = high > 0
+            ? (highName ? highName + ' bid ' : 'Highest bid is ') + high + '. Bid higher to take it, or pass.'
+            : (isDealer ? 'Everyone passed — you must take it at 15.' : 'Open the bidding');
+          card.appendChild(mk('div', 'boa-title', 'Your Bid'));
+          card.appendChild(mk('div', 'boa-hint', hintText));
+          const passBtn = mk('button', 'pass-btn', isDealer && high === 0 ? 'Take at 15' : 'Pass');
+          passBtn.onclick = function() { submitBid('pass'); };
+          btns.appendChild(passBtn);
+          if (!(isDealer && high === 0)) {
+            BID_LADDER.forEach(function(b) {
+              var tooLow = high > 0 && b <= high;
+              var label = b === 60 ? '30-for-60' : String(b);
+              var btn = mk('button', null, label);
+              if (b === 60) btn.title = 'Bid 30 to win 60: a special bid worth double points if you make it, double the loss if you miss it.';
+              if (tooLow) btn.disabled = true;
+              btn.onclick = (function(bid) { return function() { submitBid(bid); }; })(b);
+              btns.appendChild(btn);
+            });
+          }
+        }
+
         card.appendChild(btns);
         // Read-only mini-hand inside the modal so the user can see their cards
         // without scrolling. Bidding has no trump yet, so highlights are off.
@@ -1999,7 +2061,11 @@
 
       // Hand / trick progress
       const hand = Number(g.hand_number || 1);
-      const cardPlays = app.events.filter(function (e) { return e.event_type === 'card_played'; }).length;
+      var _handDealtSeq = 0;
+      for (var _i = app.events.length - 1; _i >= 0; _i--) {
+        if (app.events[_i].event_type === 'hand_dealt') { _handDealtSeq = app.events[_i].seq_no; break; }
+      }
+      const cardPlays = app.events.filter(function (e) { return e.event_type === 'card_played' && e.seq_no > _handDealtSeq; }).length;
       const completedTricks = Math.floor(cardPlays / 4);
       const handPill = mk('div', 'info-pill');
       handPill.appendChild(mk('span', 'label', 'Hand'));
@@ -2625,7 +2691,7 @@
         if (activeAnimation && activeAnimation.winnerSeat !== null) {
           const winName = seatDisplayName(activeAnimation.winnerSeat);
           label.textContent = activeAnimation.phase === 'collecting'
-            ? (winName + ' takes the trick')
+            ? (actorPhrase(winName, 'take') + ' the trick')
             : (winName + ' wins!');
         } else if (cardsInMiddle === 0) {
           label.textContent = '';
@@ -2741,13 +2807,17 @@
         }
 
         const state = await api('/api/game/get_state?game_id=' + encodeURIComponent(app.gameId));
-        app.state      = state.game || {};
-        app.hand       = state.hand || null;
-        app.scores     = state.scores || null;
-        app.players    = state.players || [];
-        app.events     = state.events || [];
-        app.viewerHand = Array.isArray(state.viewer_hand) ? state.viewer_hand : [];
-        app.viewerSeat = findViewerSeat();
+        app.state         = state.game || {};
+        app.hand          = state.hand || null;
+        app.scores        = state.scores || null;
+        app.players       = state.players || [];
+        app.events        = state.events || [];
+        app.viewerHand    = Array.isArray(state.viewer_hand) ? state.viewer_hand : [];
+        app.viewerSeat    = findViewerSeat();
+        app.bidSubPhase   = state.bid_sub_phase || null;
+        app.inRejectLoop  = !!state.in_reject_loop;
+        app.currentHighBid  = state.current_high_bid || null;
+        app.currentHighSeat = state.current_high_seat ?? null;
         syncTrickAnimation(previousMaxSeq);
         syncDealAnimation(previousMaxSeq);
         syncKittyAnimation(previousMaxSeq);
@@ -2781,7 +2851,7 @@
       renderBoardOverlay();
       try {
         status('Submitting bid...', '');
-        const bid = rawBid === 'pass' ? 'pass' : Number(rawBid);
+        const bid = (rawBid === 'pass' || rawBid === 'reject') ? rawBid : Number(rawBid);
         const res = await api('/api/game/submit_bid', 'POST', {
           game_id: app.gameId,
           seat: app.viewerSeat,

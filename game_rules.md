@@ -96,9 +96,9 @@ Bidding proceeds clockwise starting from the player to the dealer's left. Each p
 - If all players pass, the dealer is forced to bid 15.
 
 ### 4.2 The 30-for-60 Bid (Newfoundland Special)
-- A player may bid "30 for 60," meaning they commit to winning all 5 tricks (all 30 points).
-- If successful, the bidding team receives **60 points** instead of 30.
-- If unsuccessful, the bidding team loses **60 points**.
+- A player may bid "30 for 60," meaning they commit to winning **all 30 available points** in the hand — all 5 tricks (25 points) plus the 5-point high-trump bonus (§7.1).
+- If successful (bidding team scores exactly 30 hand points), they receive **60 points** instead of 30.
+- If unsuccessful (bidding team scores fewer than 30 hand points), the bidding team loses **60 points**.
 - This is the highest possible bid and cannot be outbid.
 
 ### 4.3 Winning the Bid

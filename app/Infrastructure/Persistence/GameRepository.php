@@ -892,21 +892,32 @@ class GameRepository
         ]);
         $rows = $stmt->fetchAll();
 
-        $highestBid  = 0;
-        $highestSeat = null;
+        $highestBid    = 0;
+        $highestSeat   = null;
+        $inRejectLoop  = false;
+        $lastBid       = null;
+        $lastBidSeat   = null;
         foreach ($rows as $row) {
             $payload = json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR);
             $bid = $payload['bid'] ?? null;
+            if ($bid === 'reject') {
+                $inRejectLoop = true;
+            }
             if (is_int($bid) && $bid >= $highestBid) {
                 $highestBid  = $bid;
                 $highestSeat = (int) $row['actor_seat'];
             }
+            $lastBid     = $bid;
+            $lastBidSeat = (int) $row['actor_seat'];
         }
 
         return [
-            'count'        => count($rows),
-            'highest_bid'  => $highestBid,
-            'highest_seat' => $highestSeat,
+            'count'         => count($rows),
+            'highest_bid'   => $highestBid,
+            'highest_seat'  => $highestSeat,
+            'in_reject_loop' => $inRejectLoop,
+            'last_bid'      => $lastBid,
+            'last_bid_seat' => $lastBidSeat,
         ];
     }
 

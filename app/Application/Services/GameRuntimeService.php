@@ -72,12 +72,13 @@ final class GameRuntimeService
             return ActionResult::rejected('wrong_phase', 'Bids are only allowed in bidding phase.');
         }
 
-        $bid    = $command->payload['bid'] ?? null;
-        $isPass = $bid === 'pass' || $bid === null;
+        $bid      = $command->payload['bid'] ?? null;
+        $isPass   = $bid === 'pass' || $bid === null;
+        $isReject = $bid === 'reject';
         // 60 represents "30-for-60" bid
         $allowed = [15, 20, 25, 30, 60];
-        if (!$isPass && (!is_int($bid) || !in_array($bid, $allowed, true))) {
-            return ActionResult::rejected('invalid_bid', 'Bid must be pass or one of 15,20,25,30,60.');
+        if (!$isPass && !$isReject && (!is_int($bid) || !in_array($bid, $allowed, true))) {
+            return ActionResult::rejected('invalid_bid', 'Bid must be pass, reject, or one of 15,20,25,30,60.');
         }
 
         $gameId      = (int) $state['id'];
@@ -85,19 +86,40 @@ final class GameRuntimeService
         $isDealer    = $command->seat === $dealerSeat;
         $playerCount = $this->games->getPlayerCount($gameId);
 
-        // Validate bid amount against the current standing high bid.
-        // Non-dealer must strictly exceed it; dealer may match to steal.
-        if (!$isPass) {
-            $preSummary  = $this->games->bidSummary($gameId);
-            $currentHigh = (int) ($preSummary['highest_bid'] ?? 0);
-            if ($currentHigh > 0) {
-                if ($isDealer && $bid < $currentHigh) {
+        // Pre-validation: read current bid state before the transaction
+        $preSummary  = $this->games->bidSummary($gameId);
+        $currentHigh = (int) ($preSummary['highest_bid'] ?? 0);
+        $inLoop      = (bool) ($preSummary['in_reject_loop'] ?? false);
+        $highSeat    = $preSummary['highest_seat'] ?? null;
+
+        if ($isReject) {
+            if (!$isDealer) {
+                return ActionResult::rejected('invalid_action', 'Only the dealer can reject a bid.');
+            }
+            if ($currentHigh === 0) {
+                return ActionResult::rejected('invalid_action', 'Nothing to reject: no bid has been made.');
+            }
+            if ($currentHigh === 60) {
+                return ActionResult::rejected('invalid_action', 'Cannot reject a 30-for-60 bid.');
+            }
+        } elseif (!$isPass && is_int($bid)) {
+            if ($inLoop) {
+                // In the reject loop only the current high bidder may raise
+                if ($command->seat !== $highSeat) {
+                    return ActionResult::rejected('invalid_action', 'Only the current high bidder may raise in a reject loop.');
+                }
+                if ($bid <= $currentHigh) {
+                    return ActionResult::rejected('bid_too_low', 'Bid must exceed the current highest bid of ' . $currentHigh . '.');
+                }
+            } else {
+                // Normal bidding: dealer cannot place numeric bids — must reject or concede
+                if ($isDealer && $currentHigh > 0) {
                     return ActionResult::rejected(
-                        'bid_too_low',
-                        'Dealer must match or exceed the current bid of ' . $currentHigh . ' to steal it.'
+                        'invalid_action',
+                        'Dealer must reject or concede the current bid — numeric bids are not allowed.'
                     );
                 }
-                if (!$isDealer && $bid <= $currentHigh) {
+                if (!$isDealer && $currentHigh > 0 && $bid <= $currentHigh) {
                     return ActionResult::rejected(
                         'bid_too_low',
                         'Bid must exceed the current highest bid of ' . $currentHigh . '.'
@@ -106,26 +128,66 @@ final class GameRuntimeService
             }
         }
 
-        return $this->games->withTransaction(function () use ($gameId, $command, $bid, $isPass, $state, $dealerSeat, $playerCount): ActionResult {
+        return $this->games->withTransaction(function () use (
+            $gameId, $command, $bid, $isPass, $isReject, $state, $dealerSeat, $playerCount
+        ): ActionResult {
             $this->games->appendEvent($gameId, 'bid_action', $command->seat, [
-                'bid' => $isPass ? 'pass' : $bid,
+                'bid' => $isPass ? 'pass' : ($isReject ? 'reject' : $bid),
                 'at'  => gmdate('c'),
             ]);
 
-            $summary  = $this->games->bidSummary($gameId);
-            $nextSeat = ($command->seat + 1) % $playerCount;
+            $summary = $this->games->bidSummary($gameId);
+            $inLoop  = (bool) ($summary['in_reject_loop'] ?? false);
 
+            if ($inLoop) {
+                // Reject-loop state machine: only dealer ↔ high bidder alternate
+                $highSeat = $summary['highest_seat'];
+
+                if ($isPass) {
+                    // Whoever concedes lets the other side declare trump
+                    $trumpDeclarer = ($command->seat === $dealerSeat) ? $highSeat : $dealerSeat;
+                    return $this->closeBidding($gameId, $state, $summary, $dealerSeat, $trumpDeclarer);
+                }
+
+                if ($isReject) {
+                    // Dealer rejects again: turn goes back to high bidder
+                    $this->games->setTurn($gameId, (int) $highSeat);
+                    return ActionResult::accepted(['phase' => 'bidding', 'current_turn_seat' => (int) $highSeat]);
+                }
+
+                // Numeric raise by the bidder
+                if ((int) $bid === 60) {
+                    // 30-for-60: dealer cannot reject — close immediately, bidder wins and declares trump
+                    return $this->closeBidding($gameId, $state, $summary, $dealerSeat);
+                }
+
+                // Raise below 60: turn goes back to dealer
+                $this->games->setTurn($gameId, $dealerSeat);
+                return ActionResult::accepted(['phase' => 'bidding', 'current_turn_seat' => $dealerSeat]);
+            }
+
+            // Normal bidding: check if all players have acted
             if ((int) $summary['count'] >= $playerCount) {
                 return $this->closeBidding($gameId, $state, $summary, $dealerSeat);
             }
 
+            $nextSeat = ($command->seat + 1) % $playerCount;
             $this->games->setTurn($gameId, $nextSeat);
             return ActionResult::accepted(['phase' => 'bidding', 'current_turn_seat' => $nextSeat]);
         });
     }
 
-    private function closeBidding(int $gameId, array $state, array $summary, int $dealerSeat): ActionResult
-    {
+    /**
+     * @param int|null $trumpDeclarerSeat Seat that declares trump. Defaults to bid winner.
+     *                                    Differs from bid winner when dealer concedes in reject loop.
+     */
+    private function closeBidding(
+        int $gameId,
+        array $state,
+        array $summary,
+        int $dealerSeat,
+        ?int $trumpDeclarerSeat = null
+    ): ActionResult {
         $winnerSeat = $summary['highest_seat'];
         $winningBid = (int) ($summary['highest_bid'] ?: 0);
         $is30For60  = $winningBid === 60;
@@ -141,28 +203,34 @@ final class GameRuntimeService
             ]);
         }
 
-        // Persist bid to the hands record
-        $hand = $this->games->findCurrentHand($gameId);
-        if ($hand !== null) {
-            $this->games->setHandBid((int) $hand['id'], $winnerSeat, $winningBid, $is30For60);
+        // Trump declarer defaults to bid winner
+        if ($trumpDeclarerSeat === null) {
+            $trumpDeclarerSeat = (int) $winnerSeat;
         }
 
-        $this->games->appendEvent($gameId, 'bidding_closed', (int) $winnerSeat, [
-            'winning_bid'  => $winningBid,
-            'winning_seat' => (int) $winnerSeat,
-            'is_30_for_60' => $is30For60,
-            'at'           => gmdate('c'),
+        // Persist bid to the hands record (bid winner = trump declarer always gets the kitty)
+        $hand = $this->games->findCurrentHand($gameId);
+        if ($hand !== null) {
+            $this->games->setHandBid((int) $hand['id'], $trumpDeclarerSeat, $winningBid, $is30For60);
+        }
+
+        $this->games->appendEvent($gameId, 'bidding_closed', $trumpDeclarerSeat, [
+            'winning_bid'         => $winningBid,
+            'winning_seat'        => $trumpDeclarerSeat,
+            'is_30_for_60'        => $is30For60,
+            'trump_declarer_seat' => $trumpDeclarerSeat,
+            'at'                  => gmdate('c'),
         ]);
 
         // Kitty is NOT given to the winner yet — they declare trump first, then receive
         // the kitty face-up (only visible to them).  See handleDeclareTrump().
 
-        // Transition to declare_trump — only the bid winner acts
-        $this->games->setPhaseAndTurn($gameId, 'declare_trump', (int) $winnerSeat);
+        // Transition to declare_trump — trump declarer acts (may differ from bid winner)
+        $this->games->setPhaseAndTurn($gameId, 'declare_trump', $trumpDeclarerSeat);
 
         return ActionResult::accepted([
             'phase'             => 'declare_trump',
-            'current_turn_seat' => (int) $winnerSeat,
+            'current_turn_seat' => $trumpDeclarerSeat,
         ]);
     }
 
@@ -469,20 +537,24 @@ final class GameRuntimeService
 
     private function startTrickPlay(int $gameId, array $state, int $handId, int $bidWinnerSeat): ActionResult
     {
+        $playerCount = $this->games->getPlayerCount($gameId);
+        // First trick is led by the player to the left of the bid winner
+        $leadSeat    = ($bidWinnerSeat + 1) % $playerCount;
+
         $this->games->setHandPhase($handId, 'trick_play');
-        $this->games->setPhaseAndTurn($gameId, 'trick_play', $bidWinnerSeat);
+        $this->games->setPhaseAndTurn($gameId, 'trick_play', $leadSeat);
 
         // Create trick 1
-        $this->games->createTrick($handId, 1, $bidWinnerSeat);
+        $this->games->createTrick($handId, 1, $leadSeat);
 
         $this->games->appendEvent($gameId, 'trick_play_started', null, [
-            'lead_seat' => $bidWinnerSeat,
+            'lead_seat' => $leadSeat,
             'at'        => gmdate('c'),
         ]);
 
         return ActionResult::accepted([
             'phase'             => 'trick_play',
-            'current_turn_seat' => $bidWinnerSeat,
+            'current_turn_seat' => $leadSeat,
         ]);
     }
 
@@ -704,7 +776,7 @@ final class GameRuntimeService
             $team0Delta = $teamTricks[0];
         }
 
-        $bidMade = $bidTeamPoints >= $bidValue;
+        $bidMade = $is30For60 ? ($bidTeamPoints >= 30) : ($bidTeamPoints >= $bidValue);
         if ($bidMade) {
             // Score points won (not just bid amount)
             if ($bidTeam === 0) {
@@ -925,8 +997,10 @@ final class GameRuntimeService
         $phase = (string) ($gameState['current_phase'] ?? '');
 
         if ($phase === 'bidding') {
-            $summary             = $this->games->bidSummary($gameId);
-            $ctx['highest_bid']  = (int) ($summary['highest_bid'] ?? 0);
+            $summary                  = $this->games->bidSummary($gameId);
+            $ctx['highest_bid']       = (int) ($summary['highest_bid'] ?? 0);
+            $ctx['highest_bid_seat']  = $summary['highest_seat'] ?? null;
+            $ctx['in_reject_loop']    = (bool) ($summary['in_reject_loop'] ?? false);
         }
 
         if ($phase === 'trick_play' && $hand !== null) {

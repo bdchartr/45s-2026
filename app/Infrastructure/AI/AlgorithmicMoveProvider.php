@@ -56,23 +56,51 @@ final class AlgorithmicMoveProvider implements MoveProviderInterface
      * Bid (max suit count × 5) if it is a valid bid value and is high enough.
      * Non-dealer must strictly exceed the current highest; dealer may match to steal.
      *
+     * In the reject loop:
+     *   - Dealer AI: concedes (passes) — simple heuristic, always let bidder name trump.
+     *   - Bidder AI: raises by one step if it can, otherwise concedes.
+     *
      * Valid bid values: 15, 20, 25, 30, 60.
-     * Possible counts 1–5 yield multiples 5, 10, 15, 20, 25. Only 15, 20, 25
-     * land on legal values; count=1 or count=2 always results in a pass.
      */
     private function chooseBid(AIRequest $request): AIResponse
     {
-        $hand       = $request->state['hand_cards'] ?? [];
-        $highestBid = (int) ($request->state['highest_bid'] ?? 0);
-        $isDealer   = $request->seat === (int) ($request->state['dealer_seat'] ?? -1);
+        $hand         = $request->state['hand_cards'] ?? [];
+        $highestBid   = (int) ($request->state['highest_bid'] ?? 0);
+        $highestSeat  = $request->state['highest_bid_seat'] ?? null;
+        $isDealer     = $request->seat === (int) ($request->state['dealer_seat'] ?? -1);
+        $inRejectLoop = (bool) ($request->state['in_reject_loop'] ?? false);
+
+        if ($inRejectLoop) {
+            if ($isDealer) {
+                // Dealer AI always concedes in reject loop
+                return new AIResponse('submit_bid', ['bid' => 'pass'], 'Conceding reject loop to bidder');
+            }
+
+            // Bidder AI: raise by one step or concede if at ceiling
+            $ladder = [15, 20, 25, 30, 60];
+            $pos    = array_search($highestBid, $ladder, true);
+            if ($pos !== false && $pos < count($ladder) - 1) {
+                $nextBid = $ladder[$pos + 1];
+                return new AIResponse('submit_bid', ['bid' => $nextBid], "Raising to {$nextBid} in reject loop");
+            }
+            return new AIResponse('submit_bid', ['bid' => 'pass'], 'At bid ceiling — conceding reject loop to dealer');
+        }
 
         $suitCounts = $this->countSuits($hand);
         $maxCount   = max($suitCounts);
-        $bidAmount  = $maxCount * 5;
 
-        $legalBids  = [15, 20, 25, 30, 60];
-        $meetsThreshold = $isDealer ? $bidAmount >= $highestBid : $bidAmount > $highestBid;
-        $isLegal    = in_array($bidAmount, $legalBids, true) && $meetsThreshold;
+        // Dealer's initial turn: reject (strong hand) or concede — no numeric bids allowed
+        if ($isDealer && $highestBid > 0) {
+            if ($highestBid < 60 && $maxCount >= 4) {
+                return new AIResponse('submit_bid', ['bid' => 'reject'], "Dealer rejects bid of {$highestBid}");
+            }
+            return new AIResponse('submit_bid', ['bid' => 'pass'], "Dealer concedes at {$highestBid}");
+        }
+
+        // Non-dealer (or dealer with no standing bid — forced 15 via pass)
+        $bidAmount = $maxCount * 5;
+        $legalBids = [15, 20, 25, 30, 60];
+        $isLegal   = in_array($bidAmount, $legalBids, true) && $bidAmount > $highestBid;
 
         if (!$isLegal) {
             return new AIResponse(
@@ -82,11 +110,10 @@ final class AlgorithmicMoveProvider implements MoveProviderInterface
             );
         }
 
-        $stealNote = ($isDealer && $bidAmount === $highestBid) ? ' (dealer steal)' : '';
         return new AIResponse(
             'submit_bid',
             ['bid' => $bidAmount],
-            "Bidding {$bidAmount} ({$maxCount} cards in best suit){$stealNote}"
+            "Bidding {$bidAmount} ({$maxCount} cards in best suit)"
         );
     }
 

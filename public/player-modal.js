@@ -61,11 +61,11 @@
       box-shadow: 0 24px 64px rgba(30,20,10,0.22);
       width: 100%; max-width: 560px;
       max-height: 88vh; display: flex; flex-direction: column;
-      overflow: hidden;
+      overflow: hidden; position: relative;
     }
     #pm-header {
       display: flex; align-items: center; gap: 14px;
-      padding: 18px 20px 14px;
+      padding: 18px 52px 14px 20px;
       border-bottom: 1px solid #e8dfd2;
     }
     .pm-avatar {
@@ -81,16 +81,17 @@
       font-family: sans-serif; cursor: pointer;
       vertical-align: middle;
     }
-    #pm-title { flex: 1; min-width: 0; }
+    #pm-title { flex: 1; min-width: 0; overflow: hidden; }
     #pm-username {
       font-size: 18px; font-weight: 800; letter-spacing: -0.01em;
       line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     #pm-subtitle { font-size: 12px; color: #5c6670; margin-top: 2px; }
     #pm-close {
+      position: absolute; top: 14px; right: 16px;
       background: none; border: 1px solid #ccc; border-radius: 8px;
-      cursor: pointer; color: #888; font-size: 14px; padding: 5px 10px;
-      flex-shrink: 0; transition: color 0.15s, border-color 0.15s;
+      cursor: pointer; color: #888; font-size: 14px; padding: 5px 9px;
+      transition: color 0.15s, border-color 0.15s; z-index: 1;
     }
     #pm-close:hover { color: #333; border-color: #888; }
     #pm-tabs {
@@ -232,13 +233,13 @@
     dialog.setAttribute('hidden', '');
     dialog.innerHTML = `
       <div id="pm-box">
+        <button id="pm-close" onclick="closePlayerModal()">✕</button>
         <div id="pm-header">
           <div class="pm-avatar" id="pm-av"></div>
           <div id="pm-title">
             <div id="pm-username">Loading…</div>
             <div id="pm-subtitle"></div>
           </div>
-          <button id="pm-close" onclick="closePlayerModal()">✕ Close</button>
         </div>
         <div id="pm-tabs"></div>
         <div id="pm-body"><div class="pm-spinner">Loading…</div></div>
